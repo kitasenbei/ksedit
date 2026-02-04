@@ -276,14 +276,11 @@ size_t buffer_get_cursor(Buffer* buf) { return buf->cursor; }
 
 size_t buffer_line_count(Buffer* buf)
 {
-    size_t count = 1;
-    size_t len   = buffer_length(buf);
-    for (size_t i = 0; i < len; i++) {
-        if (buffer_char_at(buf, i) == '\n') {
-            count++;
-        }
+    // Use cached line count from line index (O(1) instead of O(n))
+    if (buf->line_count == 0) {
+        buffer_rebuild_line_index(buf);
     }
-    return count;
+    return buf->line_count;
 }
 
 bool buffer_load_file(Buffer* buf, const char* filename)
