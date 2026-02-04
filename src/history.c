@@ -8,29 +8,21 @@ void history_init(PosHistory* h)
 
 void history_push(PosHistory* h, size_t pos)
 {
-    // Don't push if same as current position
-    if (h->count > 0 && h->index > 0) {
-        if (h->positions[h->index - 1] == pos)
-            return;
-    }
+    // Don't push if same as last position
+    if (h->count > 0 && h->positions[h->count - 1] == pos)
+        return;
 
-    // If we're not at the end of history, truncate forward history
-    if (h->index < h->count) {
-        h->count = h->index;
-    }
-
-    // Push new position
+    // Always append, don't truncate forward history
     if (h->count < POS_HISTORY_SIZE) {
         h->positions[h->count++] = pos;
-        h->index = h->count;
     } else {
         // Shift history left
         for (int i = 1; i < POS_HISTORY_SIZE; i++) {
             h->positions[i - 1] = h->positions[i];
         }
         h->positions[POS_HISTORY_SIZE - 1] = pos;
-        h->index = POS_HISTORY_SIZE;
     }
+    h->index = h->count;
 }
 
 size_t history_back(PosHistory* h, size_t current_pos)

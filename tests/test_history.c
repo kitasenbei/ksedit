@@ -63,7 +63,7 @@ TEST(test_history_no_duplicate)
     ASSERT(!history_can_go_back(&h) || h.count == 1);
 }
 
-TEST(test_history_truncate_on_new)
+TEST(test_history_preserve_forward)
 {
     PosHistory h;
     history_init(&h);
@@ -74,10 +74,14 @@ TEST(test_history_truncate_on_new)
     history_back(&h, 300); // At 200
     history_back(&h, 200); // At 100
 
-    // Push new position - should truncate forward history
+    // Push new position - should NOT truncate forward history
     history_push(&h, 150);
 
-    ASSERT(!history_can_go_forward(&h));
+    // Can still go back through all history
+    ASSERT(history_can_go_back(&h));
+
+    // History should be [100, 200, 300, 150]
+    ASSERT_EQ(h.count, 4);
 }
 
 TEST(test_history_overflow)
@@ -102,7 +106,7 @@ int main(void)
     RUN_TEST(test_history_back);
     RUN_TEST(test_history_forward);
     RUN_TEST(test_history_no_duplicate);
-    RUN_TEST(test_history_truncate_on_new);
+    RUN_TEST(test_history_preserve_forward);
     RUN_TEST(test_history_overflow);
     TEST_SUMMARY();
 }
