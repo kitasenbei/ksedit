@@ -5,6 +5,10 @@
 
 #define INITIAL_GAP_SIZE 4096
 
+// Forward declarations for incremental line index updates
+static void line_index_insert_char(Buffer* buf, size_t pos, char c);
+static void line_index_delete_char(Buffer* buf, size_t pos, char c);
+
 Buffer* buffer_create(size_t initial_capacity)
 {
     Buffer* buf = malloc(sizeof(Buffer));
@@ -108,9 +112,12 @@ void buffer_insert_char(Buffer* buf, char c)
     buffer_expand(buf, 1);
     buffer_move_gap(buf, buf->cursor);
     buf->data[buf->gap_start++] = c;
+
+    // Incremental line index update (before cursor increment)
+    line_index_insert_char(buf, buf->cursor, c);
+
     buf->cursor++;
-    buf->modified   = true;
-    buf->line_count = 0; // Invalidate line index
+    buf->modified = true;
 
     if (c == '\n') {
         buf->line++;
@@ -125,13 +132,16 @@ void buffer_delete_char(Buffer* buf)
     if (buf->cursor >= buffer_length(buf))
         return;
 
-    char deleted[2] = { buffer_char_at(buf, buf->cursor), '\0' };
+    char deleted_char = buffer_char_at(buf, buf->cursor);
+    char deleted[2]   = { deleted_char, '\0' };
     undo_push_delete(buf->undo, buf->cursor, deleted, 1);
 
     buffer_move_gap(buf, buf->cursor);
     buf->gap_end++;
-    buf->modified   = true;
-    buf->line_count = 0; // Invalidate line index
+    buf->modified = true;
+
+    // Incremental line index update
+    line_index_delete_char(buf, buf->cursor, deleted_char);
 }
 
 void buffer_backspace(Buffer* buf)
@@ -146,8 +156,10 @@ void buffer_backspace(Buffer* buf)
     buffer_move_gap(buf, buf->cursor);
     buf->gap_start--;
     buf->cursor--;
-    buf->modified   = true;
-    buf->line_count = 0; // Invalidate line index
+    buf->modified = true;
+
+    // Incremental line index update
+    line_index_delete_char(buf, buf->cursor, deleted_char);
 
     if (deleted_char == '\n') {
         buf->line--;
@@ -964,6 +976,81 @@ void buffer_select_line(Buffer* buf)
     buffer_start_selection(buf);
     buffer_move_cursor_to(buf, line_end);
     buffer_update_selection(buf);
+}
+
+// Incremental line index update - O(lines_after) instead of O(file_size)
+static void line_index_insert_char(Buffer* buf, size_t pos, char c)
+{
+    if (buf->line_count == 0 || buf->line_offsets == NULL)
+        return; // Index not built yet, will be built on demand
+
+    // Find which line this position is on using binary search
+    size_t lo = 0, hi = buf->line_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (buf->line_offsets[mid] <= pos)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    size_t current_line = (lo > 0) ? lo - 1 : 0;
+
+    if (c == '\n') {
+        // Inserting newline - add new line entry
+        if (buf->line_count >= buf->line_capacity) {
+            buf->line_capacity = buf->line_capacity * 2 + 1024;
+            buf->line_offsets = realloc(buf->line_offsets, buf->line_capacity * sizeof(size_t));
+        }
+        // Shift lines after insertion point
+        for (size_t i = buf->line_count; i > current_line + 1; i--) {
+            buf->line_offsets[i] = buf->line_offsets[i - 1] + 1;
+        }
+        // Insert new line start
+        buf->line_offsets[current_line + 1] = pos + 1;
+        buf->line_count++;
+        // Update remaining lines
+        for (size_t i = current_line + 2; i < buf->line_count; i++) {
+            buf->line_offsets[i]++;
+        }
+    } else {
+        // Regular char - just shift offsets of lines after current
+        for (size_t i = current_line + 1; i < buf->line_count; i++) {
+            buf->line_offsets[i]++;
+        }
+    }
+}
+
+static void line_index_delete_char(Buffer* buf, size_t pos, char c)
+{
+    if (buf->line_count == 0 || buf->line_offsets == NULL)
+        return;
+
+    // Find which line this position is on
+    size_t lo = 0, hi = buf->line_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (buf->line_offsets[mid] <= pos)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    size_t current_line = (lo > 0) ? lo - 1 : 0;
+
+    if (c == '\n') {
+        // Deleting newline - merge lines
+        if (current_line + 1 < buf->line_count) {
+            // Shift lines down
+            for (size_t i = current_line + 1; i < buf->line_count - 1; i++) {
+                buf->line_offsets[i] = buf->line_offsets[i + 1] - 1;
+            }
+            buf->line_count--;
+        }
+    } else {
+        // Regular char - just shift offsets of lines after current
+        for (size_t i = current_line + 1; i < buf->line_count; i++) {
+            buf->line_offsets[i]--;
+        }
+    }
 }
 
 // Line index for fast scrolling
