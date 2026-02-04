@@ -163,6 +163,10 @@ InputEvent input_poll(Window_State* win)
     }
 
     case ButtonRelease: {
+        // Ignore scroll wheel release (buttons 4/5)
+        if (xev.xbutton.button == 4 || xev.xbutton.button == 5) {
+            break;
+        }
         ev.type          = EVENT_MOUSE;
         ev.mouse.x       = xev.xbutton.x;
         ev.mouse.y       = xev.xbutton.y;
