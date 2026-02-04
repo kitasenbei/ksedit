@@ -1,0 +1,5 @@
+BasedOnStyle: WebKit
+AlignConsecutiveAssignments: Consecutive
+AlignArrayOfStructures: Right
+AlignConsecutiveBitFields: AcrossEmptyLines
+AlignConsecutiveDeclarations: Consecutive

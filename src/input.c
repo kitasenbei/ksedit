@@ -1,0 +1,176 @@
+#include "input.h"
+#include <X11/Xutil.h>
+#include <X11/keysym.h>
+
+InputEvent input_poll(Window_State* win)
+{
+    InputEvent ev = { 0 };
+    ev.type       = EVENT_NONE;
+
+    if (!XPending(win->display)) {
+        return ev;
+    }
+
+    XEvent xev;
+    XNextEvent(win->display, &xev);
+
+    switch (xev.type) {
+    case KeyPress: {
+        ev.type = EVENT_KEY;
+
+        XKeyEvent* key = &xev.xkey;
+        ev.key.ctrl    = (key->state & ControlMask) != 0;
+        ev.key.shift   = (key->state & ShiftMask) != 0;
+        ev.key.alt     = (key->state & Mod1Mask) != 0;
+
+        char   buf[32];
+        KeySym keysym;
+        int    len = XLookupString(key, buf, sizeof(buf), &keysym, NULL);
+
+        // Handle control keys
+        if (ev.key.ctrl) {
+            switch (keysym) {
+            case XK_s:
+            case XK_S:
+                ev.key.type = KEY_CTRL_S;
+                return ev;
+            case XK_q:
+            case XK_Q:
+                ev.key.type = KEY_CTRL_Q;
+                return ev;
+            case XK_o:
+            case XK_O:
+                ev.key.type = KEY_CTRL_O;
+                return ev;
+            }
+        }
+
+        // Handle special keys
+        switch (keysym) {
+        case XK_Return:
+        case XK_KP_Enter:
+            ev.key.type = KEY_ENTER;
+            break;
+        case XK_BackSpace:
+            ev.key.type = KEY_BACKSPACE;
+            break;
+        case XK_Delete:
+        case XK_KP_Delete:
+            ev.key.type = KEY_DELETE;
+            break;
+        case XK_Tab:
+        case XK_KP_Tab:
+            ev.key.type = KEY_TAB;
+            break;
+        case XK_Up:
+        case XK_KP_Up:
+            ev.key.type = KEY_UP;
+            break;
+        case XK_Down:
+        case XK_KP_Down:
+            ev.key.type = KEY_DOWN;
+            break;
+        case XK_Left:
+        case XK_KP_Left:
+            ev.key.type = KEY_LEFT;
+            break;
+        case XK_Right:
+        case XK_KP_Right:
+            ev.key.type = KEY_RIGHT;
+            break;
+        case XK_Home:
+        case XK_KP_Home:
+            ev.key.type = KEY_HOME;
+            break;
+        case XK_End:
+        case XK_KP_End:
+            ev.key.type = KEY_END;
+            break;
+        case XK_Page_Up:
+        case XK_KP_Page_Up:
+            ev.key.type = KEY_PAGE_UP;
+            break;
+        case XK_Page_Down:
+        case XK_KP_Page_Down:
+            ev.key.type = KEY_PAGE_DOWN;
+            break;
+        case XK_Escape:
+            ev.key.type = KEY_ESCAPE;
+            break;
+        default:
+            if (len > 0 && buf[0] >= 32 && buf[0] < 127) {
+                ev.key.type = KEY_CHAR;
+                ev.key.c    = buf[0];
+            } else {
+                ev.key.type = KEY_NONE;
+            }
+            break;
+        }
+        break;
+    }
+
+    case ButtonPress: {
+        // Button 4/5 are scroll wheel in X11
+        if (xev.xbutton.button == 4) {
+            ev.type     = EVENT_KEY;
+            ev.key.type = KEY_SCROLL_UP;
+            ev.key.ctrl = (xev.xbutton.state & ControlMask) != 0;
+            break;
+        } else if (xev.xbutton.button == 5) {
+            ev.type     = EVENT_KEY;
+            ev.key.type = KEY_SCROLL_DOWN;
+            ev.key.ctrl = (xev.xbutton.state & ControlMask) != 0;
+            break;
+        }
+        ev.type          = EVENT_MOUSE;
+        ev.mouse.x       = xev.xbutton.x;
+        ev.mouse.y       = xev.xbutton.y;
+        ev.mouse.button  = xev.xbutton.button;
+        ev.mouse.pressed = true;
+        break;
+    }
+
+    case ButtonRelease: {
+        ev.type          = EVENT_MOUSE;
+        ev.mouse.x       = xev.xbutton.x;
+        ev.mouse.y       = xev.xbutton.y;
+        ev.mouse.button  = xev.xbutton.button;
+        ev.mouse.pressed = false;
+        break;
+    }
+
+    case MotionNotify: {
+        ev.type          = EVENT_MOUSE_MOVE;
+        ev.mouse.x       = xev.xmotion.x;
+        ev.mouse.y       = xev.xmotion.y;
+        ev.mouse.button  = 0;
+        ev.mouse.pressed = (xev.xmotion.state & Button1Mask) != 0;
+        break;
+    }
+
+    case ConfigureNotify: {
+        XConfigureEvent* cfg = &xev.xconfigure;
+        if (cfg->width != win->width || cfg->height != win->height) {
+            ev.type          = EVENT_RESIZE;
+            ev.resize.width  = cfg->width;
+            ev.resize.height = cfg->height;
+        }
+        break;
+    }
+
+    case ClientMessage: {
+        if ((Atom)xev.xclient.data.l[0] == win->wm_delete) {
+            ev.type           = EVENT_CLOSE;
+            win->should_close = true;
+        }
+        break;
+    }
+
+    case Expose: {
+        // Just mark for redraw, handled in main loop
+        break;
+    }
+    }
+
+    return ev;
+}

@@ -1,0 +1,72 @@
+#ifndef KSEDIT_INPUT_H
+#define KSEDIT_INPUT_H
+
+#include "types.h"
+#include "window.h"
+
+typedef enum {
+    KEY_NONE = 0,
+    KEY_CHAR,
+    KEY_ENTER,
+    KEY_BACKSPACE,
+    KEY_DELETE,
+    KEY_TAB,
+    KEY_UP,
+    KEY_DOWN,
+    KEY_LEFT,
+    KEY_RIGHT,
+    KEY_HOME,
+    KEY_END,
+    KEY_PAGE_UP,
+    KEY_PAGE_DOWN,
+    KEY_ESCAPE,
+    KEY_CTRL_S,
+    KEY_CTRL_Q,
+    KEY_CTRL_O,
+    KEY_SCROLL_UP,
+    KEY_SCROLL_DOWN,
+} KeyType;
+
+typedef struct
+{
+    KeyType type;
+    char    c;
+    bool    ctrl;
+    bool    shift;
+    bool    alt;
+} KeyEvent;
+
+typedef struct
+{
+    int  x;
+    int  y;
+    bool pressed;
+    int  button;
+} MouseEvent;
+
+typedef enum {
+    EVENT_NONE,
+    EVENT_KEY,
+    EVENT_MOUSE,
+    EVENT_MOUSE_MOVE,
+    EVENT_RESIZE,
+    EVENT_CLOSE,
+} EventType;
+
+typedef struct
+{
+    EventType type;
+    union {
+        KeyEvent   key;
+        MouseEvent mouse;
+        struct
+        {
+            int width;
+            int height;
+        } resize;
+    };
+} InputEvent;
+
+InputEvent input_poll(Window_State* win);
+
+#endif
