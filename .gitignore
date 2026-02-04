@@ -1,3 +1,5 @@
 build/
 ksedit
 *.o
+vgcore.*
+core
