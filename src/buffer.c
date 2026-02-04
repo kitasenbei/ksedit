@@ -37,6 +37,10 @@ Buffer* buffer_create(size_t initial_capacity)
 
     buf->undo = undo_create();
 
+    buf->line_offsets  = NULL;
+    buf->line_count    = 0;
+    buf->line_capacity = 0;
+
     return buf;
 }
 
@@ -46,6 +50,7 @@ void buffer_destroy(Buffer* buf)
         return;
     free(buf->data);
     free(buf->filename);
+    free(buf->line_offsets);
     undo_destroy(buf->undo);
     free(buf);
 }
@@ -104,7 +109,8 @@ void buffer_insert_char(Buffer* buf, char c)
     buffer_move_gap(buf, buf->cursor);
     buf->data[buf->gap_start++] = c;
     buf->cursor++;
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
 
     if (c == '\n') {
         buf->line++;
@@ -124,7 +130,8 @@ void buffer_delete_char(Buffer* buf)
 
     buffer_move_gap(buf, buf->cursor);
     buf->gap_end++;
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
 }
 
 void buffer_backspace(Buffer* buf)
@@ -139,7 +146,8 @@ void buffer_backspace(Buffer* buf)
     buffer_move_gap(buf, buf->cursor);
     buf->gap_start--;
     buf->cursor--;
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
 
     if (deleted_char == '\n') {
         buf->line--;
@@ -296,6 +304,9 @@ bool buffer_load_file(Buffer* buf, const char* filename)
     free(buf->filename);
     buf->filename = strdup(filename);
 
+    // Build line index for fast scrolling
+    buffer_rebuild_line_index(buf);
+
     return true;
 }
 
@@ -392,7 +403,8 @@ void buffer_delete_selection(Buffer* buf)
         buf->gap_end++;
     }
 
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
     buffer_clear_selection(buf);
 }
 
@@ -419,7 +431,8 @@ void buffer_insert_text(Buffer* buf, const char* text, size_t len)
             buf->col++;
         }
     }
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
 }
 
 void buffer_delete_range(Buffer* buf, size_t start, size_t end)
@@ -439,7 +452,8 @@ void buffer_delete_range(Buffer* buf, size_t start, size_t end)
         buffer_move_gap(buf, buf->cursor);
         buf->gap_end++;
     }
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
 }
 
 char* buffer_get_range(Buffer* buf, size_t start, size_t end)
@@ -481,7 +495,8 @@ void buffer_undo(Buffer* buf)
             buf->cursor++;
         }
     }
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
     buffer_move_cursor_to(buf, op->pos);
 }
 
@@ -508,7 +523,8 @@ void buffer_redo(Buffer* buf)
             buf->gap_end++;
         }
     }
-    buf->modified = true;
+    buf->modified   = true;
+    buf->line_count = 0; // Invalidate line index
     buffer_move_cursor_to(buf, op->pos + (op->type == OP_INSERT ? op->len : 0));
 }
 
@@ -880,4 +896,47 @@ void buffer_select_line(Buffer* buf)
     buffer_start_selection(buf);
     buffer_move_cursor_to(buf, line_end);
     buffer_update_selection(buf);
+}
+
+// Line index for fast scrolling
+void buffer_rebuild_line_index(Buffer* buf)
+{
+    size_t len = buffer_length(buf);
+
+    // Count lines first
+    size_t count = 1;
+    for (size_t i = 0; i < len; i++) {
+        if (buffer_char_at(buf, i) == '\n') {
+            count++;
+        }
+    }
+
+    // Allocate/reallocate
+    if (count > buf->line_capacity) {
+        buf->line_capacity = count + 1024; // Some headroom
+        buf->line_offsets  = realloc(buf->line_offsets, buf->line_capacity * sizeof(size_t));
+    }
+
+    // Build index
+    buf->line_offsets[0] = 0;
+    size_t line          = 1;
+    for (size_t i = 0; i < len; i++) {
+        if (buffer_char_at(buf, i) == '\n' && line < count) {
+            buf->line_offsets[line++] = i + 1;
+        }
+    }
+    buf->line_count = count;
+}
+
+size_t buffer_get_line_offset(Buffer* buf, size_t line)
+{
+    // Rebuild if needed
+    if (buf->line_offsets == NULL || buf->line_count == 0) {
+        buffer_rebuild_line_index(buf);
+    }
+
+    if (line >= buf->line_count) {
+        return buffer_length(buf);
+    }
+    return buf->line_offsets[line];
 }

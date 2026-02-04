@@ -24,6 +24,11 @@ typedef struct
 
     // Undo
     UndoStack* undo;
+
+    // Line index for fast scrolling
+    size_t* line_offsets;
+    size_t  line_count;
+    size_t  line_capacity;
 } Buffer;
 
 Buffer* buffer_create(size_t initial_capacity);
@@ -72,6 +77,10 @@ i64 buffer_find_next(Buffer* buf, const char* needle);
 
 // Goto
 void buffer_goto_line(Buffer* buf, size_t line);
+
+// Line index
+void   buffer_rebuild_line_index(Buffer* buf);
+size_t buffer_get_line_offset(Buffer* buf, size_t line);
 
 // Word operations
 void buffer_move_word_left(Buffer* buf);

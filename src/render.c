@@ -152,29 +152,10 @@ void render_buffer(Renderer* r, Buffer* buf)
     buffer_get_line_col(buf, &cursor_line, &cursor_col);
 
     size_t buf_len = buffer_length(buf);
-    size_t pos     = 0;
-    size_t line    = 0;
 
-    // Use cached position if scroll hasn't changed
-    static size_t cached_scroll_y = (size_t)-1;
-    static size_t cached_pos      = 0;
-    static size_t cached_buf_len  = 0;
-
-    if (cached_scroll_y == r->scroll_y && cached_buf_len == buf_len) {
-        pos  = cached_pos;
-        line = r->scroll_y;
-    } else {
-        // Skip lines before scroll_y
-        while (line < r->scroll_y && pos < buf_len) {
-            if (buffer_char_at(buf, pos) == '\n') {
-                line++;
-            }
-            pos++;
-        }
-        cached_scroll_y = r->scroll_y;
-        cached_pos      = pos;
-        cached_buf_len  = buf_len;
-    }
+    // Use line index for O(1) scroll positioning
+    size_t pos  = buffer_get_line_offset(buf, r->scroll_y);
+    size_t line = r->scroll_y;
 
     // Reset comment state for visible region - don't prescan
     syntax.in_multiline_comment = false;
