@@ -496,6 +496,12 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
                 } else {
                     ed->renderer.scroll_y = 0;
                 }
+                // Extend selection if dragging
+                if (ed->dragging_selection) {
+                    size_t pos = screen_to_buffer_pos(ed, ed->last_mouse_x, ed->last_mouse_y);
+                    buffer_move_cursor_to(ed->buffer, pos);
+                    buffer_update_selection(ed->buffer);
+                }
             }
             break;
 
@@ -507,6 +513,12 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
                 }
             } else {
                 ed->renderer.scroll_y += 3;
+                // Extend selection if dragging
+                if (ed->dragging_selection) {
+                    size_t pos = screen_to_buffer_pos(ed, ed->last_mouse_x, ed->last_mouse_y);
+                    buffer_move_cursor_to(ed->buffer, pos);
+                    buffer_update_selection(ed->buffer);
+                }
             }
             break;
 
@@ -550,6 +562,8 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
                 buffer_start_selection(ed->buffer);
                 ed->dragging_selection = true;
                 ed->dragging_scrollbar = false;
+                ed->last_mouse_x       = ev->mouse.x;
+                ed->last_mouse_y       = ev->mouse.y;
             }
         } else if (!ev->mouse.pressed) {
             ed->dragging_scrollbar = false;
@@ -608,6 +622,8 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             size_t pos = screen_to_buffer_pos(ed, ev->mouse.x, clamped_y);
             buffer_move_cursor_to(ed->buffer, pos);
             buffer_update_selection(ed->buffer);
+            ed->last_mouse_x = ev->mouse.x;
+            ed->last_mouse_y = ev->mouse.y;
         } else {
             ed->dragging_scrollbar = false;
             ed->dragging_selection = false;

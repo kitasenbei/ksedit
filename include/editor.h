@@ -23,6 +23,8 @@ typedef struct
     bool         running;
     bool         dragging_scrollbar;
     bool         dragging_selection;
+    int          last_mouse_x;
+    int          last_mouse_y;
     char         status_msg[256];
 
     // Find/Goto input
