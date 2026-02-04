@@ -1,5 +1,6 @@
 #include "render.h"
 #include "font.h"
+#include "syntax.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -10,13 +11,23 @@ void render_init(Renderer* r, Window_State* win)
     r->scroll_y   = 0;
     r->font_scale = 1;
 
-    // Dark theme
+    // Dark theme (VS Code inspired)
     r->theme.bg        = 0x1e1e1e;
     r->theme.fg        = 0xd4d4d4;
     r->theme.cursor    = 0xffffff;
     r->theme.line_num  = 0x858585;
     r->theme.status_bg = 0x007acc;
     r->theme.status_fg = 0xffffff;
+    r->theme.selection = 0x264f78;
+
+    // Syntax colors
+    r->theme.keyword  = 0xc586c0; // Purple - keywords
+    r->theme.type     = 0x4ec9b0; // Teal - types
+    r->theme.string   = 0xce9178; // Orange - strings
+    r->theme.comment  = 0x6a9955; // Green - comments
+    r->theme.number   = 0xb5cea8; // Light green - numbers
+    r->theme.preproc  = 0x9cdcfe; // Light blue - preprocessor
+    r->theme.function = 0xdcdcaa; // Yellow - functions
 }
 
 void render_clear(Renderer* r)
@@ -84,8 +95,39 @@ int render_visible_lines(Renderer* r)
 
 int render_visible_cols(Renderer* r) { return r->win->width / (FONT_WIDTH * r->font_scale); }
 
+static u32 get_syntax_color(Renderer* r, TokenType type)
+{
+    switch (type) {
+    case TOKEN_KEYWORD:
+        return r->theme.keyword;
+    case TOKEN_TYPE:
+        return r->theme.type;
+    case TOKEN_STRING:
+        return r->theme.string;
+    case TOKEN_CHAR:
+        return r->theme.string;
+    case TOKEN_COMMENT:
+        return r->theme.comment;
+    case TOKEN_NUMBER:
+        return r->theme.number;
+    case TOKEN_PREPROC:
+        return r->theme.preproc;
+    case TOKEN_FUNCTION:
+        return r->theme.function;
+    default:
+        return r->theme.fg;
+    }
+}
+
 void render_buffer(Renderer* r, Buffer* buf)
 {
+    static SyntaxState syntax             = { 0 };
+    static bool        syntax_initialized = false;
+    if (!syntax_initialized) {
+        syntax_init(&syntax);
+        syntax_initialized = true;
+    }
+
     int scale         = r->font_scale;
     int char_w        = FONT_WIDTH * scale;
     int char_h        = FONT_HEIGHT * scale;
@@ -112,6 +154,27 @@ void render_buffer(Renderer* r, Buffer* buf)
     size_t pos     = 0;
     size_t line    = 0;
 
+    // Track multiline comment state - scan from beginning
+    syntax.in_multiline_comment = false;
+    size_t scan_pos             = 0;
+    size_t scan_line            = 0;
+    while (scan_line < r->scroll_y && scan_pos < buf_len) {
+        char c = buffer_char_at(buf, scan_pos);
+        if (c == '/' && scan_pos + 1 < buf_len && buffer_char_at(buf, scan_pos + 1) == '*') {
+            syntax.in_multiline_comment = true;
+            scan_pos += 2;
+            continue;
+        }
+        if (syntax.in_multiline_comment && c == '*' && scan_pos + 1 < buf_len && buffer_char_at(buf, scan_pos + 1) == '/') {
+            syntax.in_multiline_comment = false;
+            scan_pos += 2;
+            continue;
+        }
+        if (c == '\n')
+            scan_line++;
+        scan_pos++;
+    }
+
     // Skip lines before scroll_y
     while (line < r->scroll_y && pos < buf_len) {
         if (buffer_char_at(buf, pos) == '\n') {
@@ -120,10 +183,29 @@ void render_buffer(Renderer* r, Buffer* buf)
         pos++;
     }
 
+    // Line buffer for syntax highlighting
+    static char line_buf[4096];
+
     // Render visible lines
     for (int screen_line = 0; screen_line < visible_lines && pos <= buf_len; screen_line++) {
         int    y            = screen_line * char_h;
         size_t current_line = r->scroll_y + screen_line;
+        size_t line_start   = pos;
+
+        // Extract line for syntax highlighting
+        size_t line_len = 0;
+        size_t temp_pos = pos;
+        while (temp_pos < buf_len && line_len < sizeof(line_buf) - 1) {
+            char c = buffer_char_at(buf, temp_pos);
+            if (c == '\n')
+                break;
+            line_buf[line_len++] = c;
+            temp_pos++;
+        }
+        line_buf[line_len] = '\0';
+
+        // Run syntax highlighting
+        syntax_highlight_line(&syntax, line_buf, line_len);
 
         // Draw line number
         char line_num_str[16];
@@ -135,7 +217,7 @@ void render_buffer(Renderer* r, Buffer* buf)
         // Draw separator
         render_char(r, line_num_width * char_w, y, ' ', r->theme.line_num, r->theme.bg);
 
-        // Draw text
+        // Draw text with syntax highlighting
         size_t col = 0;
         while (pos < buf_len) {
             char c = buffer_char_at(buf, pos);
@@ -149,9 +231,15 @@ void render_buffer(Renderer* r, Buffer* buf)
                 if (screen_col < visible_cols - line_num_width - 1) {
                     int x = text_start_x + screen_col * char_w;
 
-                    bool is_cursor = (current_line == cursor_line && col == cursor_col);
-                    u32  bg        = is_cursor ? r->theme.cursor : r->theme.bg;
-                    u32  fg        = is_cursor ? r->theme.bg : r->theme.fg;
+                    bool is_cursor   = (current_line == cursor_line && col == cursor_col);
+                    bool is_selected = buf->has_selection && pos >= buf->sel_start && pos < buf->sel_end;
+
+                    // Get syntax color
+                    TokenType token_type = syntax_get_token_at(&syntax, col);
+                    u32       syntax_fg  = get_syntax_color(r, token_type);
+
+                    u32 bg = is_cursor ? r->theme.cursor : (is_selected ? r->theme.selection : r->theme.bg);
+                    u32 fg = is_cursor ? r->theme.bg : syntax_fg;
 
                     if (c == '\t') {
                         render_char(r, x, y, ' ', fg, bg);

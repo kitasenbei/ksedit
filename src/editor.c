@@ -5,6 +5,61 @@
 #include <string.h>
 #include <time.h>
 
+// Convert screen x,y to buffer position
+static size_t screen_to_buffer_pos(Editor* ed, int x, int y)
+{
+    int scale  = ed->renderer.font_scale;
+    int char_w = 8 * scale;
+    int char_h = 16 * scale;
+
+    // Calculate line number width
+    size_t total_lines    = buffer_line_count(ed->buffer);
+    int    line_num_width = 1;
+    size_t n              = total_lines;
+    while (n >= 10) {
+        n /= 10;
+        line_num_width++;
+    }
+    if (line_num_width < 4)
+        line_num_width = 4;
+
+    int text_start_x = (line_num_width + 1) * char_w;
+
+    // Calculate clicked line and column
+    int clicked_line = y / char_h;
+    int clicked_col  = (x - text_start_x) / char_w;
+    if (clicked_col < 0)
+        clicked_col = 0;
+
+    size_t target_line = ed->renderer.scroll_y + clicked_line;
+    size_t target_col  = ed->renderer.scroll_x + clicked_col;
+
+    // Find position in buffer
+    size_t pos     = 0;
+    size_t line    = 0;
+    size_t buf_len = buffer_length(ed->buffer);
+
+    // Skip to target line
+    while (line < target_line && pos < buf_len) {
+        if (buffer_char_at(ed->buffer, pos) == '\n') {
+            line++;
+        }
+        pos++;
+    }
+
+    // Move to target column
+    size_t col = 0;
+    while (col < target_col && pos < buf_len) {
+        char c = buffer_char_at(ed->buffer, pos);
+        if (c == '\n')
+            break;
+        col++;
+        pos++;
+    }
+
+    return pos;
+}
+
 static void editor_scroll_to_cursor(Editor* ed)
 {
     size_t cursor_line, cursor_col;
@@ -65,6 +120,7 @@ void editor_destroy(Editor* ed)
 {
     buffer_destroy(ed->buffer);
     window_destroy(&ed->window);
+    free(ed->clipboard);
 }
 
 void editor_set_status(Editor* ed, const char* msg)
@@ -87,8 +143,114 @@ void editor_open_file(Editor* ed, const char* filename)
     }
 }
 
+static void editor_handle_find_mode(Editor* ed, InputEvent* ev)
+{
+    if (ev->type != EVENT_KEY)
+        return;
+
+    switch (ev->key.type) {
+    case KEY_ESCAPE:
+        ed->mode = MODE_INSERT;
+        editor_set_status(ed, "");
+        break;
+    case KEY_ENTER: {
+        ed->input_buf[ed->input_len] = '\0';
+        i64 pos                      = buffer_find(ed->buffer, ed->input_buf, ed->buffer->cursor + 1);
+        if (pos < 0)
+            pos = buffer_find(ed->buffer, ed->input_buf, 0); // Wrap
+        if (pos >= 0) {
+            buffer_move_cursor_to(ed->buffer, pos);
+            buffer_start_selection(ed->buffer);
+            buffer_move_cursor(ed->buffer, ed->input_len);
+            buffer_update_selection(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            editor_set_status(ed, "Found. Enter: next, Esc: done");
+        } else {
+            editor_set_status(ed, "Not found");
+        }
+        break;
+    }
+    case KEY_BACKSPACE:
+        if (ed->input_len > 0) {
+            ed->input_len--;
+            ed->input_buf[ed->input_len] = '\0';
+            char msg[300];
+            snprintf(msg, sizeof(msg), "Find: %s", ed->input_buf);
+            editor_set_status(ed, msg);
+        }
+        break;
+    case KEY_CHAR:
+        if (ed->input_len < sizeof(ed->input_buf) - 1) {
+            ed->input_buf[ed->input_len++] = ev->key.c;
+            ed->input_buf[ed->input_len]   = '\0';
+            char msg[300];
+            snprintf(msg, sizeof(msg), "Find: %s", ed->input_buf);
+            editor_set_status(ed, msg);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static void editor_handle_goto_mode(Editor* ed, InputEvent* ev)
+{
+    if (ev->type != EVENT_KEY)
+        return;
+
+    switch (ev->key.type) {
+    case KEY_ESCAPE:
+        ed->mode = MODE_INSERT;
+        editor_set_status(ed, "");
+        break;
+    case KEY_ENTER: {
+        ed->input_buf[ed->input_len] = '\0';
+        int line                     = atoi(ed->input_buf);
+        if (line > 0) {
+            buffer_goto_line(ed->buffer, line);
+            editor_scroll_to_cursor(ed);
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Jumped to line %d", line);
+            editor_set_status(ed, msg);
+        }
+        ed->mode = MODE_INSERT;
+        break;
+    }
+    case KEY_BACKSPACE:
+        if (ed->input_len > 0) {
+            ed->input_len--;
+            ed->input_buf[ed->input_len] = '\0';
+            char msg[300];
+            snprintf(msg, sizeof(msg), "Goto line: %s", ed->input_buf);
+            editor_set_status(ed, msg);
+        }
+        break;
+    case KEY_CHAR:
+        if (ev->key.c >= '0' && ev->key.c <= '9' && ed->input_len < sizeof(ed->input_buf) - 1) {
+            ed->input_buf[ed->input_len++] = ev->key.c;
+            ed->input_buf[ed->input_len]   = '\0';
+            char msg[300];
+            snprintf(msg, sizeof(msg), "Goto line: %s", ed->input_buf);
+            editor_set_status(ed, msg);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void editor_handle_event(Editor* ed, InputEvent* ev)
 {
+    // Handle special modes
+    if (ed->mode == MODE_FIND) {
+        editor_handle_find_mode(ed, ev);
+        return;
+    }
+    if (ed->mode == MODE_GOTO) {
+        editor_handle_goto_mode(ed, ev);
+        return;
+    }
+
     switch (ev->type) {
     case EVENT_KEY:
         switch (ev->key.type) {
@@ -104,17 +266,92 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             }
             break;
 
+        case KEY_CTRL_Z:
+            buffer_undo(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            editor_set_status(ed, "Undo");
+            break;
+
+        case KEY_CTRL_Y:
+            buffer_redo(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            editor_set_status(ed, "Redo");
+            break;
+
+        case KEY_CTRL_C:
+        case KEY_CTRL_X: {
+            if (buffer_has_selection(ed->buffer)) {
+                size_t len;
+                char*  text = buffer_get_selection(ed->buffer, &len);
+                if (text) {
+                    free(ed->clipboard);
+                    ed->clipboard     = text;
+                    ed->clipboard_len = len;
+
+                    if (ev->key.type == KEY_CTRL_X) {
+                        buffer_delete_selection(ed->buffer);
+                        editor_set_status(ed, "Cut");
+                    } else {
+                        editor_set_status(ed, "Copied");
+                    }
+                }
+            }
+            break;
+        }
+
+        case KEY_CTRL_V:
+            if (ed->clipboard && ed->clipboard_len > 0) {
+                if (buffer_has_selection(ed->buffer)) {
+                    buffer_delete_selection(ed->buffer);
+                }
+                buffer_insert_text(ed->buffer, ed->clipboard, ed->clipboard_len);
+                editor_scroll_to_cursor(ed);
+                editor_set_status(ed, "Pasted");
+            }
+            break;
+
+        case KEY_CTRL_A:
+            buffer_start_selection(ed->buffer);
+            ed->buffer->sel_anchor = 0;
+            buffer_move_cursor_to(ed->buffer, buffer_length(ed->buffer));
+            buffer_update_selection(ed->buffer);
+            editor_set_status(ed, "Selected all");
+            break;
+
+        case KEY_CTRL_F:
+            ed->mode         = MODE_FIND;
+            ed->input_len    = 0;
+            ed->input_buf[0] = '\0';
+            editor_set_status(ed, "Find: ");
+            break;
+
+        case KEY_CTRL_G:
+            ed->mode         = MODE_GOTO;
+            ed->input_len    = 0;
+            ed->input_buf[0] = '\0';
+            editor_set_status(ed, "Goto line: ");
+            break;
+
         case KEY_CHAR:
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            }
             buffer_insert_char(ed->buffer, ev->key.c);
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_ENTER:
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            }
             buffer_insert_char(ed->buffer, '\n');
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_TAB:
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            }
             for (int i = 0; i < TAB_WIDTH; i++) {
                 buffer_insert_char(ed->buffer, ' ');
             }
@@ -122,55 +359,127 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             break;
 
         case KEY_BACKSPACE:
-            buffer_backspace(ed->buffer);
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            } else {
+                buffer_backspace(ed->buffer);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_DELETE:
-            buffer_delete_char(ed->buffer);
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            } else {
+                buffer_delete_char(ed->buffer);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_LEFT:
-            buffer_move_cursor(ed->buffer, -1);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_cursor(ed->buffer, -1);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_cursor(ed->buffer, -1);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_RIGHT:
-            buffer_move_cursor(ed->buffer, 1);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_cursor(ed->buffer, 1);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_cursor(ed->buffer, 1);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_UP:
-            buffer_move_line(ed->buffer, -1);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_line(ed->buffer, -1);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_line(ed->buffer, -1);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_DOWN:
-            buffer_move_line(ed->buffer, 1);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_line(ed->buffer, 1);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_line(ed->buffer, 1);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_HOME:
-            buffer_move_to_line_start(ed->buffer);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_to_line_start(ed->buffer);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_to_line_start(ed->buffer);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_END:
-            buffer_move_to_line_end(ed->buffer);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_to_line_end(ed->buffer);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_to_line_end(ed->buffer);
+            }
             editor_scroll_to_cursor(ed);
             break;
 
         case KEY_PAGE_UP: {
             int lines = render_visible_lines(&ed->renderer);
-            buffer_move_line(ed->buffer, -lines);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_line(ed->buffer, -lines);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_line(ed->buffer, -lines);
+            }
             editor_scroll_to_cursor(ed);
             break;
         }
 
         case KEY_PAGE_DOWN: {
             int lines = render_visible_lines(&ed->renderer);
-            buffer_move_line(ed->buffer, lines);
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_line(ed->buffer, lines);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_line(ed->buffer, lines);
+            }
             editor_scroll_to_cursor(ed);
             break;
         }
@@ -201,6 +510,11 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             }
             break;
 
+        case KEY_ESCAPE:
+            buffer_clear_selection(ed->buffer);
+            editor_set_status(ed, "");
+            break;
+
         default:
             break;
         }
@@ -209,13 +523,13 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
     case EVENT_MOUSE:
         if (ev->mouse.pressed && ev->mouse.button == 1) {
             int scale  = ed->renderer.font_scale;
-            int char_w = 8 * scale;
             int char_h = 16 * scale;
             int sb_x   = ed->window.width - render_scrollbar_width();
 
             // Check if click is on scrollbar
             if (ev->mouse.x >= sb_x) {
                 ed->dragging_scrollbar = true;
+                ed->dragging_selection = false;
                 // Jump to position
                 size_t total_lines   = buffer_line_count(ed->buffer);
                 int    visible_lines = render_visible_lines(&ed->renderer);
@@ -230,55 +544,16 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
                     ed->renderer.scroll_y = new_scroll;
                 }
             } else {
-                // Click in text area - move cursor
-                size_t total_lines    = buffer_line_count(ed->buffer);
-                int    line_num_width = 1;
-                size_t n              = total_lines;
-                while (n >= 10) {
-                    n /= 10;
-                    line_num_width++;
-                }
-                if (line_num_width < 4)
-                    line_num_width = 4;
-
-                int text_start_x = (line_num_width + 1) * char_w;
-
-                // Calculate clicked line and column
-                int clicked_line = ev->mouse.y / char_h;
-                int clicked_col  = (ev->mouse.x - text_start_x) / char_w;
-                if (clicked_col < 0)
-                    clicked_col = 0;
-
-                size_t target_line = ed->renderer.scroll_y + clicked_line;
-                size_t target_col  = ed->renderer.scroll_x + clicked_col;
-
-                // Find position in buffer
-                size_t pos     = 0;
-                size_t line    = 0;
-                size_t buf_len = buffer_length(ed->buffer);
-
-                // Skip to target line
-                while (line < target_line && pos < buf_len) {
-                    if (buffer_char_at(ed->buffer, pos) == '\n') {
-                        line++;
-                    }
-                    pos++;
-                }
-
-                // Move to target column
-                size_t col = 0;
-                while (col < target_col && pos < buf_len) {
-                    char c = buffer_char_at(ed->buffer, pos);
-                    if (c == '\n')
-                        break;
-                    col++;
-                    pos++;
-                }
-
+                // Click in text area - move cursor and start selection
+                size_t pos = screen_to_buffer_pos(ed, ev->mouse.x, ev->mouse.y);
                 buffer_move_cursor_to(ed->buffer, pos);
+                buffer_start_selection(ed->buffer);
+                ed->dragging_selection = true;
+                ed->dragging_scrollbar = false;
             }
         } else if (!ev->mouse.pressed) {
             ed->dragging_scrollbar = false;
+            ed->dragging_selection = false;
         }
         break;
 
@@ -302,8 +577,15 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
                     new_scroll = scrollable;
                 ed->renderer.scroll_y = new_scroll;
             }
+        } else if (ed->dragging_selection && ev->mouse.pressed) {
+            // Extend selection while dragging
+            size_t pos = screen_to_buffer_pos(ed, ev->mouse.x, ev->mouse.y);
+            buffer_move_cursor_to(ed->buffer, pos);
+            buffer_update_selection(ed->buffer);
+            editor_scroll_to_cursor(ed);
         } else {
             ed->dragging_scrollbar = false;
+            ed->dragging_selection = false;
         }
         break;
 

@@ -42,6 +42,38 @@ InputEvent input_poll(Window_State* win)
             case XK_O:
                 ev.key.type = KEY_CTRL_O;
                 return ev;
+            case XK_z:
+            case XK_Z:
+                ev.key.type = KEY_CTRL_Z;
+                return ev;
+            case XK_y:
+            case XK_Y:
+                ev.key.type = KEY_CTRL_Y;
+                return ev;
+            case XK_c:
+            case XK_C:
+                ev.key.type = KEY_CTRL_C;
+                return ev;
+            case XK_v:
+            case XK_V:
+                ev.key.type = KEY_CTRL_V;
+                return ev;
+            case XK_x:
+            case XK_X:
+                ev.key.type = KEY_CTRL_X;
+                return ev;
+            case XK_f:
+            case XK_F:
+                ev.key.type = KEY_CTRL_F;
+                return ev;
+            case XK_g:
+            case XK_G:
+                ev.key.type = KEY_CTRL_G;
+                return ev;
+            case XK_a:
+            case XK_A:
+                ev.key.type = KEY_CTRL_A;
+                return ev;
             }
         }
 

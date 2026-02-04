@@ -30,6 +30,13 @@ Buffer* buffer_create(size_t initial_capacity)
     buf->modified  = false;
     buf->filename  = NULL;
 
+    buf->has_selection = false;
+    buf->sel_anchor    = 0;
+    buf->sel_start     = 0;
+    buf->sel_end       = 0;
+
+    buf->undo = undo_create();
+
     return buf;
 }
 
@@ -39,6 +46,7 @@ void buffer_destroy(Buffer* buf)
         return;
     free(buf->data);
     free(buf->filename);
+    undo_destroy(buf->undo);
     free(buf);
 }
 
@@ -89,6 +97,9 @@ static void buffer_move_gap(Buffer* buf, size_t pos)
 
 void buffer_insert_char(Buffer* buf, char c)
 {
+    char str[2] = { c, '\0' };
+    undo_push_insert(buf->undo, buf->cursor, str, 1);
+
     buffer_expand(buf, 1);
     buffer_move_gap(buf, buf->cursor);
     buf->data[buf->gap_start++] = c;
@@ -105,8 +116,12 @@ void buffer_insert_char(Buffer* buf, char c)
 
 void buffer_delete_char(Buffer* buf)
 {
-    if (buf->gap_end >= buf->capacity)
+    if (buf->cursor >= buffer_length(buf))
         return;
+
+    char deleted[2] = { buffer_char_at(buf, buf->cursor), '\0' };
+    undo_push_delete(buf->undo, buf->cursor, deleted, 1);
+
     buffer_move_gap(buf, buf->cursor);
     buf->gap_end++;
     buf->modified = true;
@@ -116,14 +131,17 @@ void buffer_backspace(Buffer* buf)
 {
     if (buf->cursor == 0)
         return;
-    buffer_move_gap(buf, buf->cursor);
 
-    char deleted = buf->data[buf->gap_start - 1];
+    char deleted_char = buffer_char_at(buf, buf->cursor - 1);
+    char deleted[2]   = { deleted_char, '\0' };
+    undo_push_delete(buf->undo, buf->cursor - 1, deleted, 1);
+
+    buffer_move_gap(buf, buf->cursor);
     buf->gap_start--;
     buf->cursor--;
     buf->modified = true;
 
-    if (deleted == '\n') {
+    if (deleted_char == '\n') {
         buf->line--;
         buf->col   = 0;
         size_t pos = buf->cursor;
@@ -302,4 +320,243 @@ void buffer_get_line_col(Buffer* buf, size_t* line, size_t* col)
 {
     *line = buf->line;
     *col  = buf->col;
+}
+
+// Selection functions
+void buffer_start_selection(Buffer* buf)
+{
+    buf->has_selection = true;
+    buf->sel_anchor    = buf->cursor;
+    buf->sel_start     = buf->cursor;
+    buf->sel_end       = buf->cursor;
+}
+
+void buffer_clear_selection(Buffer* buf)
+{
+    buf->has_selection = false;
+    buf->sel_anchor    = 0;
+    buf->sel_start     = 0;
+    buf->sel_end       = 0;
+}
+
+void buffer_update_selection(Buffer* buf)
+{
+    if (!buf->has_selection)
+        return;
+
+    if (buf->cursor < buf->sel_anchor) {
+        buf->sel_start = buf->cursor;
+        buf->sel_end   = buf->sel_anchor;
+    } else {
+        buf->sel_start = buf->sel_anchor;
+        buf->sel_end   = buf->cursor;
+    }
+}
+
+bool buffer_has_selection(Buffer* buf) { return buf->has_selection && buf->sel_start != buf->sel_end; }
+
+char* buffer_get_selection(Buffer* buf, size_t* out_len)
+{
+    if (!buffer_has_selection(buf)) {
+        *out_len = 0;
+        return NULL;
+    }
+
+    size_t len  = buf->sel_end - buf->sel_start;
+    char*  text = malloc(len + 1);
+
+    for (size_t i = 0; i < len; i++) {
+        text[i] = buffer_char_at(buf, buf->sel_start + i);
+    }
+    text[len] = '\0';
+    *out_len  = len;
+    return text;
+}
+
+void buffer_delete_selection(Buffer* buf)
+{
+    if (!buffer_has_selection(buf))
+        return;
+
+    size_t len;
+    char*  text = buffer_get_selection(buf, &len);
+    if (text) {
+        undo_push_delete(buf->undo, buf->sel_start, text, len);
+        free(text);
+    }
+
+    buffer_move_cursor_to(buf, buf->sel_start);
+
+    for (size_t i = 0; i < buf->sel_end - buf->sel_start; i++) {
+        buffer_move_gap(buf, buf->cursor);
+        buf->gap_end++;
+    }
+
+    buf->modified = true;
+    buffer_clear_selection(buf);
+}
+
+// Bulk operations
+void buffer_insert_text(Buffer* buf, const char* text, size_t len)
+{
+    if (buffer_has_selection(buf)) {
+        buffer_delete_selection(buf);
+    }
+
+    undo_push_insert(buf->undo, buf->cursor, text, len);
+
+    buffer_expand(buf, len);
+    buffer_move_gap(buf, buf->cursor);
+
+    for (size_t i = 0; i < len; i++) {
+        buf->data[buf->gap_start++] = text[i];
+        buf->cursor++;
+
+        if (text[i] == '\n') {
+            buf->line++;
+            buf->col = 0;
+        } else {
+            buf->col++;
+        }
+    }
+    buf->modified = true;
+}
+
+void buffer_delete_range(Buffer* buf, size_t start, size_t end)
+{
+    if (start >= end)
+        return;
+
+    char* text = buffer_get_range(buf, start, end);
+    if (text) {
+        undo_push_delete(buf->undo, start, text, end - start);
+        free(text);
+    }
+
+    buffer_move_cursor_to(buf, start);
+
+    for (size_t i = 0; i < end - start; i++) {
+        buffer_move_gap(buf, buf->cursor);
+        buf->gap_end++;
+    }
+    buf->modified = true;
+}
+
+char* buffer_get_range(Buffer* buf, size_t start, size_t end)
+{
+    if (start >= end || end > buffer_length(buf))
+        return NULL;
+
+    size_t len  = end - start;
+    char*  text = malloc(len + 1);
+
+    for (size_t i = 0; i < len; i++) {
+        text[i] = buffer_char_at(buf, start + i);
+    }
+    text[len] = '\0';
+    return text;
+}
+
+// Undo/Redo
+void buffer_undo(Buffer* buf)
+{
+    Operation* op = undo_pop(buf->undo);
+    if (!op)
+        return;
+
+    if (op->type == OP_INSERT) {
+        // Undo insert = delete
+        buffer_move_cursor_to(buf, op->pos);
+        for (size_t i = 0; i < op->len; i++) {
+            buffer_move_gap(buf, buf->cursor);
+            buf->gap_end++;
+        }
+    } else {
+        // Undo delete = insert
+        buffer_move_cursor_to(buf, op->pos);
+        buffer_expand(buf, op->len);
+        buffer_move_gap(buf, buf->cursor);
+        for (size_t i = 0; i < op->len; i++) {
+            buf->data[buf->gap_start++] = op->text[i];
+            buf->cursor++;
+        }
+    }
+    buf->modified = true;
+    buffer_move_cursor_to(buf, op->pos);
+}
+
+void buffer_redo(Buffer* buf)
+{
+    Operation* op = redo_pop(buf->undo);
+    if (!op)
+        return;
+
+    if (op->type == OP_INSERT) {
+        // Redo insert = insert again
+        buffer_move_cursor_to(buf, op->pos);
+        buffer_expand(buf, op->len);
+        buffer_move_gap(buf, buf->cursor);
+        for (size_t i = 0; i < op->len; i++) {
+            buf->data[buf->gap_start++] = op->text[i];
+            buf->cursor++;
+        }
+    } else {
+        // Redo delete = delete again
+        buffer_move_cursor_to(buf, op->pos);
+        for (size_t i = 0; i < op->len; i++) {
+            buffer_move_gap(buf, buf->cursor);
+            buf->gap_end++;
+        }
+    }
+    buf->modified = true;
+    buffer_move_cursor_to(buf, op->pos + (op->type == OP_INSERT ? op->len : 0));
+}
+
+// Find
+i64 buffer_find(Buffer* buf, const char* needle, size_t start)
+{
+    size_t needle_len = strlen(needle);
+    size_t buf_len    = buffer_length(buf);
+
+    if (needle_len == 0 || start + needle_len > buf_len)
+        return -1;
+
+    for (size_t i = start; i <= buf_len - needle_len; i++) {
+        bool match = true;
+        for (size_t j = 0; j < needle_len; j++) {
+            if (buffer_char_at(buf, i + j) != needle[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match)
+            return (i64)i;
+    }
+    return -1;
+}
+
+i64 buffer_find_next(Buffer* buf, const char* needle)
+{
+    return buffer_find(buf, needle, buf->cursor + 1);
+}
+
+// Goto line
+void buffer_goto_line(Buffer* buf, size_t target_line)
+{
+    if (target_line == 0)
+        target_line = 1;
+    target_line--; // Convert to 0-indexed
+
+    size_t pos  = 0;
+    size_t line = 0;
+    size_t len  = buffer_length(buf);
+
+    while (line < target_line && pos < len) {
+        if (buffer_char_at(buf, pos) == '\n') {
+            line++;
+        }
+        pos++;
+    }
+
+    buffer_move_cursor_to(buf, pos);
 }

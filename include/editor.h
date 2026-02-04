@@ -10,6 +10,8 @@
 typedef enum {
     MODE_NORMAL,
     MODE_INSERT,
+    MODE_FIND,
+    MODE_GOTO,
 } EditorMode;
 
 typedef struct
@@ -20,7 +22,16 @@ typedef struct
     EditorMode   mode;
     bool         running;
     bool         dragging_scrollbar;
+    bool         dragging_selection;
     char         status_msg[256];
+
+    // Find/Goto input
+    char   input_buf[256];
+    size_t input_len;
+
+    // Clipboard
+    char*  clipboard;
+    size_t clipboard_len;
 } Editor;
 
 bool editor_init(Editor* ed, int width, int height);

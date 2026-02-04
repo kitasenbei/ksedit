@@ -13,6 +13,16 @@ typedef struct
     u32 line_num;
     u32 status_bg;
     u32 status_fg;
+    u32 selection;
+
+    // Syntax colors
+    u32 keyword;
+    u32 type;
+    u32 string;
+    u32 comment;
+    u32 number;
+    u32 preproc;
+    u32 function;
 } Theme;
 
 typedef struct
