@@ -373,12 +373,26 @@ char* buffer_get_selection(Buffer* buf, size_t* out_len)
         return NULL;
     }
 
-    size_t len  = buf->sel_end - buf->sel_start;
-    char*  text = malloc(len + 1);
+    size_t start = buf->sel_start;
+    size_t end   = buf->sel_end;
+    size_t len   = end - start;
+    char*  text  = malloc(len + 1);
 
-    for (size_t i = 0; i < len; i++) {
-        text[i] = buffer_char_at(buf, buf->sel_start + i);
+    // Optimize: use memcpy instead of char-by-char
+    if (end <= buf->gap_start) {
+        // Entire selection before gap
+        memcpy(text, buf->data + start, len);
+    } else if (start >= buf->gap_start) {
+        // Entire selection after gap
+        size_t offset = buf->gap_end - buf->gap_start;
+        memcpy(text, buf->data + start + offset, len);
+    } else {
+        // Selection spans gap
+        size_t before_gap = buf->gap_start - start;
+        memcpy(text, buf->data + start, before_gap);
+        memcpy(text + before_gap, buf->data + buf->gap_end, len - before_gap);
     }
+
     text[len] = '\0';
     *out_len  = len;
     return text;
@@ -389,6 +403,9 @@ void buffer_delete_selection(Buffer* buf)
     if (!buffer_has_selection(buf))
         return;
 
+    size_t sel_len = buf->sel_end - buf->sel_start;
+
+    // Save for undo
     size_t len;
     char*  text = buffer_get_selection(buf, &len);
     if (text) {
@@ -396,12 +413,13 @@ void buffer_delete_selection(Buffer* buf)
         free(text);
     }
 
-    buffer_move_cursor_to(buf, buf->sel_start);
+    // Move gap to selection start, then expand to consume selection
+    buffer_move_gap(buf, buf->sel_start);
+    buf->gap_end += sel_len;
+    buf->cursor = buf->sel_start;
 
-    for (size_t i = 0; i < buf->sel_end - buf->sel_start; i++) {
-        buffer_move_gap(buf, buf->cursor);
-        buf->gap_end++;
-    }
+    // Update line/col
+    buffer_move_cursor_to(buf, buf->cursor);
 
     buf->modified   = true;
     buf->line_count = 0; // Invalidate line index
@@ -440,18 +458,21 @@ void buffer_delete_range(Buffer* buf, size_t start, size_t end)
     if (start >= end)
         return;
 
+    size_t del_len = end - start;
+
+    // Save for undo
     char* text = buffer_get_range(buf, start, end);
     if (text) {
-        undo_push_delete(buf->undo, start, text, end - start);
+        undo_push_delete(buf->undo, start, text, del_len);
         free(text);
     }
 
-    buffer_move_cursor_to(buf, start);
+    // Move gap to start, expand to consume range
+    buffer_move_gap(buf, start);
+    buf->gap_end += del_len;
+    buf->cursor = start;
 
-    for (size_t i = 0; i < end - start; i++) {
-        buffer_move_gap(buf, buf->cursor);
-        buf->gap_end++;
-    }
+    buffer_move_cursor_to(buf, buf->cursor);
     buf->modified   = true;
     buf->line_count = 0; // Invalidate line index
 }
@@ -464,9 +485,21 @@ char* buffer_get_range(Buffer* buf, size_t start, size_t end)
     size_t len  = end - start;
     char*  text = malloc(len + 1);
 
-    for (size_t i = 0; i < len; i++) {
-        text[i] = buffer_char_at(buf, start + i);
+    // Optimize: use memcpy instead of char-by-char
+    if (end <= buf->gap_start) {
+        // Entire range before gap
+        memcpy(text, buf->data + start, len);
+    } else if (start >= buf->gap_start) {
+        // Entire range after gap
+        size_t offset = buf->gap_end - buf->gap_start;
+        memcpy(text, buf->data + start + offset, len);
+    } else {
+        // Range spans gap
+        size_t before_gap = buf->gap_start - start;
+        memcpy(text, buf->data + start, before_gap);
+        memcpy(text + before_gap, buf->data + buf->gap_end, len - before_gap);
     }
+
     text[len] = '\0';
     return text;
 }
