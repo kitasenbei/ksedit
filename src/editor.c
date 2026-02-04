@@ -92,60 +92,26 @@ static void editor_scroll_to_cursor(Editor* ed)
     }
 }
 
-#define POS_HISTORY_SIZE 64
-
 static void editor_push_position(Editor* ed)
 {
-    size_t pos = ed->buffer->cursor;
-
-    // Don't push if same as current position
-    if (ed->pos_history_count > 0 && ed->pos_history_index > 0) {
-        if (ed->pos_history[ed->pos_history_index - 1] == pos)
-            return;
-    }
-
-    // If we're not at the end of history, truncate forward history
-    if (ed->pos_history_index < ed->pos_history_count) {
-        ed->pos_history_count = ed->pos_history_index;
-    }
-
-    // Push new position
-    if (ed->pos_history_count < POS_HISTORY_SIZE) {
-        ed->pos_history[ed->pos_history_count++] = pos;
-        ed->pos_history_index = ed->pos_history_count;
-    } else {
-        // Shift history left
-        for (int i = 1; i < POS_HISTORY_SIZE; i++) {
-            ed->pos_history[i - 1] = ed->pos_history[i];
-        }
-        ed->pos_history[POS_HISTORY_SIZE - 1] = pos;
-        ed->pos_history_index = POS_HISTORY_SIZE;
-    }
+    history_push(&ed->history, ed->buffer->cursor);
 }
 
 static void editor_jump_back(Editor* ed)
 {
-    if (ed->pos_history_index <= 1)
+    if (!history_can_go_back(&ed->history))
         return;
-
-    // Save current position if at end of history
-    if (ed->pos_history_index == ed->pos_history_count) {
-        editor_push_position(ed);
-        ed->pos_history_index--;
-    }
-
-    ed->pos_history_index--;
-    buffer_move_cursor_to(ed->buffer, ed->pos_history[ed->pos_history_index - 1]);
+    size_t pos = history_back(&ed->history, ed->buffer->cursor);
+    buffer_move_cursor_to(ed->buffer, pos);
     editor_scroll_to_cursor(ed);
 }
 
 static void editor_jump_forward(Editor* ed)
 {
-    if (ed->pos_history_index >= ed->pos_history_count)
+    if (!history_can_go_forward(&ed->history))
         return;
-
-    ed->pos_history_index++;
-    buffer_move_cursor_to(ed->buffer, ed->pos_history[ed->pos_history_index - 1]);
+    size_t pos = history_forward(&ed->history);
+    buffer_move_cursor_to(ed->buffer, pos);
     editor_scroll_to_cursor(ed);
 }
 

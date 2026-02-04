@@ -2,6 +2,7 @@
 #define KSEDIT_EDITOR_H
 
 #include "buffer.h"
+#include "history.h"
 #include "input.h"
 #include "render.h"
 #include "types.h"
@@ -36,9 +37,7 @@ typedef struct
     size_t clipboard_len;
 
     // Position history (for jump back/forward)
-    size_t pos_history[64];
-    int    pos_history_count;
-    int    pos_history_index;
+    PosHistory history;
 } Editor;
 
 bool editor_init(Editor* ed, int width, int height);
