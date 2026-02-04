@@ -154,34 +154,29 @@ void render_buffer(Renderer* r, Buffer* buf)
     size_t pos     = 0;
     size_t line    = 0;
 
-    // Track multiline comment state - scan from beginning
-    syntax.in_multiline_comment = false;
-    size_t scan_pos             = 0;
-    size_t scan_line            = 0;
-    while (scan_line < r->scroll_y && scan_pos < buf_len) {
-        char c = buffer_char_at(buf, scan_pos);
-        if (c == '/' && scan_pos + 1 < buf_len && buffer_char_at(buf, scan_pos + 1) == '*') {
-            syntax.in_multiline_comment = true;
-            scan_pos += 2;
-            continue;
+    // Use cached position if scroll hasn't changed
+    static size_t cached_scroll_y = (size_t)-1;
+    static size_t cached_pos      = 0;
+    static size_t cached_buf_len  = 0;
+
+    if (cached_scroll_y == r->scroll_y && cached_buf_len == buf_len) {
+        pos  = cached_pos;
+        line = r->scroll_y;
+    } else {
+        // Skip lines before scroll_y
+        while (line < r->scroll_y && pos < buf_len) {
+            if (buffer_char_at(buf, pos) == '\n') {
+                line++;
+            }
+            pos++;
         }
-        if (syntax.in_multiline_comment && c == '*' && scan_pos + 1 < buf_len && buffer_char_at(buf, scan_pos + 1) == '/') {
-            syntax.in_multiline_comment = false;
-            scan_pos += 2;
-            continue;
-        }
-        if (c == '\n')
-            scan_line++;
-        scan_pos++;
+        cached_scroll_y = r->scroll_y;
+        cached_pos      = pos;
+        cached_buf_len  = buf_len;
     }
 
-    // Skip lines before scroll_y
-    while (line < r->scroll_y && pos < buf_len) {
-        if (buffer_char_at(buf, pos) == '\n') {
-            line++;
-        }
-        pos++;
-    }
+    // Reset comment state for visible region - don't prescan
+    syntax.in_multiline_comment = false;
 
     // Line buffer for syntax highlighting
     static char line_buf[4096];
