@@ -55,6 +55,29 @@ int main(int argc, char** argv)
     printf("  %d backspaces: %.3f ms (%.4f ms/char)\n\n",
            iterations, end - start, (end - start) / iterations);
 
+    // Benchmark newline insert (with simulated render that triggers rebuild)
+    printf("=== Newline insert benchmark (with render) ===\n");
+    start = get_time_ms();
+    for (int i = 0; i < 10; i++) {
+        buffer_insert_char(buf, '\n');
+        // Simulate render accessing line offsets
+        volatile size_t x = buffer_get_line_offset(buf, buf->line_count / 2);
+        (void)x;
+    }
+    end = get_time_ms();
+    printf("  10 newlines + render: %.3f ms (%.4f ms/cycle)\n\n",
+           end - start, (end - start) / 10);
+
+    // Benchmark newline delete (backspace at start of line)
+    printf("=== Newline delete benchmark ===\n");
+    start = get_time_ms();
+    for (int i = 0; i < 100; i++) {
+        buffer_backspace(buf);
+    }
+    end = get_time_ms();
+    printf("  100 newline deletes: %.3f ms (%.4f ms/delete)\n\n",
+           end - start, (end - start) / 100);
+
     // Test that line index is still valid
     printf("Line count after edits: %zu\n", buffer_line_count(buf));
 

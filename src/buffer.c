@@ -41,9 +41,11 @@ Buffer* buffer_create(size_t initial_capacity)
 
     buf->undo = undo_create();
 
-    buf->line_offsets   = NULL;
-    buf->line_count     = 0;
-    buf->line_capacity  = 0;
+    buf->line_offsets    = NULL;
+    buf->line_count      = 0;
+    buf->line_capacity   = 0;
+    buf->line_gap_start  = 0;
+    buf->line_gap_end    = 0;
     buf->dirty_from_line = 0;
     buf->offset_delta    = 0;
 
@@ -980,6 +982,43 @@ void buffer_select_line(Buffer* buf)
     buffer_update_selection(buf);
 }
 
+// Helper to get raw line offset from gap buffer
+static inline size_t line_offset_at(Buffer* buf, size_t line)
+{
+    if (line < buf->line_gap_start) {
+        return buf->line_offsets[line];
+    } else {
+        return buf->line_offsets[line + (buf->line_gap_end - buf->line_gap_start)];
+    }
+}
+
+// Move the line offset gap to a specific position
+static void move_line_gap(Buffer* buf, size_t line_pos)
+{
+    if (line_pos == buf->line_gap_start)
+        return;
+
+    size_t gap_size = buf->line_gap_end - buf->line_gap_start;
+
+    if (line_pos < buf->line_gap_start) {
+        // Move gap left: shift elements right into gap
+        size_t count = buf->line_gap_start - line_pos;
+        memmove(&buf->line_offsets[buf->line_gap_end - count],
+                &buf->line_offsets[line_pos],
+                count * sizeof(size_t));
+        buf->line_gap_start = line_pos;
+        buf->line_gap_end = line_pos + gap_size;
+    } else {
+        // Move gap right: shift elements left from after gap
+        size_t count = line_pos - buf->line_gap_start;
+        memmove(&buf->line_offsets[buf->line_gap_start],
+                &buf->line_offsets[buf->line_gap_end],
+                count * sizeof(size_t));
+        buf->line_gap_start = line_pos;
+        buf->line_gap_end = line_pos + gap_size;
+    }
+}
+
 // O(1) line index delta tracking
 // Instead of updating all line offsets, we track a delta that gets applied on read
 static void line_index_on_insert(Buffer* buf, size_t pos, char c)
@@ -987,12 +1026,11 @@ static void line_index_on_insert(Buffer* buf, size_t pos, char c)
     if (buf->line_count == 0 || buf->line_offsets == NULL)
         return;
 
-    // Find which line this position is on
+    // Find which line this position is on (use line_offset_at for gap buffer)
     size_t lo = 0, hi = buf->line_count;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
-        // Apply delta when comparing
-        i64 offset = buf->line_offsets[mid];
+        i64 offset = line_offset_at(buf, mid);
         if (mid >= buf->dirty_from_line)
             offset += buf->offset_delta;
         if ((size_t)offset <= pos)
@@ -1003,20 +1041,20 @@ static void line_index_on_insert(Buffer* buf, size_t pos, char c)
     size_t current_line = (lo > 0) ? lo - 1 : 0;
 
     if (c == '\n') {
-        // For newline insert, we need to invalidate and rebuild
-        // This is rare enough that it's ok
-        buf->line_count = 0;
-        buf->offset_delta = 0;
-        buf->dirty_from_line = 0;
-    } else {
-        // Regular char: just update delta for lines after current
-        if (buf->dirty_from_line == 0 || current_line < buf->dirty_from_line) {
-            // Apply existing delta to lines between old dirty and new dirty
-            if (buf->dirty_from_line > 0 && buf->offset_delta != 0) {
-                for (size_t i = buf->dirty_from_line; i < buf->line_count && i <= current_line; i++) {
-                    buf->line_offsets[i] += buf->offset_delta;
-                }
+        // Newline: update count and mark index as stale from current line
+        buf->line_count++;
+        // Don't invalidate - just mark where staleness starts
+        // When reading offsets past this point, we'll recalculate incrementally
+        if (buf->line_offsets != NULL) {
+            if (buf->dirty_from_line == 0 || current_line + 1 < buf->dirty_from_line) {
+                buf->dirty_from_line = current_line + 1;
             }
+            // Delta is now invalid for newlines - set special marker
+            buf->offset_delta = (i64)0x7FFFFFFF; // Marker meaning "recalc needed"
+        }
+    } else {
+        // Regular char: just track delta (O(1))
+        if (buf->dirty_from_line == 0 || current_line + 1 < buf->dirty_from_line) {
             buf->dirty_from_line = current_line + 1;
         }
         buf->offset_delta++;
@@ -1028,11 +1066,11 @@ static void line_index_on_delete(Buffer* buf, size_t pos, char c)
     if (buf->line_count == 0 || buf->line_offsets == NULL)
         return;
 
-    // Find which line this position is on
+    // Find which line this position is on (use line_offset_at for gap buffer)
     size_t lo = 0, hi = buf->line_count;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
-        i64 offset = buf->line_offsets[mid];
+        i64 offset = line_offset_at(buf, mid);
         if (mid >= buf->dirty_from_line)
             offset += buf->offset_delta;
         if ((size_t)offset <= pos)
@@ -1043,18 +1081,18 @@ static void line_index_on_delete(Buffer* buf, size_t pos, char c)
     size_t current_line = (lo > 0) ? lo - 1 : 0;
 
     if (c == '\n') {
-        // For newline delete, invalidate and rebuild
-        buf->line_count = 0;
-        buf->offset_delta = 0;
-        buf->dirty_from_line = 0;
-    } else {
-        // Regular char: just update delta
-        if (buf->dirty_from_line == 0 || current_line < buf->dirty_from_line) {
-            if (buf->dirty_from_line > 0 && buf->offset_delta != 0) {
-                for (size_t i = buf->dirty_from_line; i < buf->line_count && i <= current_line; i++) {
-                    buf->line_offsets[i] += buf->offset_delta;
-                }
+        // Newline delete: update count and mark stale
+        if (buf->line_count > 1)
+            buf->line_count--;
+        if (buf->line_offsets != NULL) {
+            if (buf->dirty_from_line == 0 || current_line + 1 < buf->dirty_from_line) {
+                buf->dirty_from_line = current_line + 1;
             }
+            buf->offset_delta = (i64)0x7FFFFFFF;
+        }
+    } else {
+        // Regular char: just track delta (O(1))
+        if (buf->dirty_from_line == 0 || current_line + 1 < buf->dirty_from_line) {
             buf->dirty_from_line = current_line + 1;
         }
         buf->offset_delta--;
@@ -1080,7 +1118,7 @@ void buffer_rebuild_line_index(Buffer* buf)
         buf->line_offsets  = realloc(buf->line_offsets, buf->line_capacity * sizeof(size_t));
     }
 
-    // Build index
+    // Build index (no gap initially, gap at end)
     buf->line_offsets[0] = 0;
     size_t line          = 1;
     for (size_t i = 0; i < len; i++) {
@@ -1088,10 +1126,13 @@ void buffer_rebuild_line_index(Buffer* buf)
             buf->line_offsets[line++] = i + 1;
         }
     }
-    buf->line_count = count;
+    buf->line_count      = count;
+    buf->line_gap_start  = count;  // Gap starts after all lines
+    buf->line_gap_end    = buf->line_capacity;  // Gap ends at capacity
     buf->dirty_from_line = 0;
-    buf->offset_delta = 0;
+    buf->offset_delta    = 0;
 }
+
 
 size_t buffer_get_line_offset(Buffer* buf, size_t line)
 {
@@ -1106,8 +1147,27 @@ size_t buffer_get_line_offset(Buffer* buf, size_t line)
         return buffer_length(buf);
     }
 
-    // Apply delta for lines in the dirty region
-    i64 offset = buf->line_offsets[line];
+    // Check if line is in the stale region (after a newline edit)
+    if (line >= buf->dirty_from_line && buf->offset_delta == (i64)0x7FFFFFFF) {
+        // Incremental recalc: scan from last known good line
+        // O(lines_between) not O(file_size)
+        size_t start_line = buf->dirty_from_line > 0 ? buf->dirty_from_line - 1 : 0;
+        size_t start_pos = line_offset_at(buf, start_line);
+        size_t buf_len = buffer_length(buf);
+
+        size_t current = start_line;
+        size_t pos = start_pos;
+        while (current < line && pos < buf_len) {
+            if (buffer_char_at(buf, pos) == '\n') {
+                current++;
+            }
+            pos++;
+        }
+        return pos;
+    }
+
+    // Apply delta for regular char edits
+    i64 offset = line_offset_at(buf, line);
     if (line >= buf->dirty_from_line) {
         offset += buf->offset_delta;
     }

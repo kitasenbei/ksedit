@@ -25,10 +25,12 @@ typedef struct
     // Undo
     UndoStack* undo;
 
-    // Line index for fast scrolling
+    // Line index for fast scrolling (gap buffer for O(1) insert/delete)
     size_t* line_offsets;
     size_t  line_count;
     size_t  line_capacity;
+    size_t  line_gap_start;  // Gap in line_offsets array
+    size_t  line_gap_end;
 
     // Delta tracking for O(1) edits
     size_t dirty_from_line;  // Lines >= this have stale offsets
