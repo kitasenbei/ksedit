@@ -182,16 +182,26 @@ void buffer_move_cursor_to(Buffer* buf, size_t pos)
         pos = len;
     buf->cursor = pos;
 
-    buf->line = 0;
-    buf->col  = 0;
-    for (size_t i = 0; i < pos; i++) {
-        if (buffer_char_at(buf, i) == '\n') {
-            buf->line++;
-            buf->col = 0;
+    // Ensure line index exists
+    if (buf->line_offsets == NULL || buf->line_count == 0) {
+        buffer_rebuild_line_index(buf);
+    }
+
+    // Binary search to find which line pos is on
+    size_t lo = 0;
+    size_t hi = buf->line_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (buf->line_offsets[mid] <= pos) {
+            lo = mid + 1;
         } else {
-            buf->col++;
+            hi = mid;
         }
     }
+
+    // lo is now the first line whose offset > pos, so pos is on line lo-1
+    buf->line = (lo > 0) ? lo - 1 : 0;
+    buf->col  = pos - buf->line_offsets[buf->line];
 }
 
 void buffer_move_line(Buffer* buf, i32 delta)
@@ -502,6 +512,34 @@ char* buffer_get_range(Buffer* buf, size_t start, size_t end)
 
     text[len] = '\0';
     return text;
+}
+
+// Fast extraction into provided buffer (no allocation)
+size_t buffer_extract(Buffer* buf, size_t start, size_t len, char* dest)
+{
+    size_t buf_len = buffer_length(buf);
+    if (start >= buf_len)
+        return 0;
+    if (start + len > buf_len)
+        len = buf_len - start;
+
+    size_t end = start + len;
+
+    if (end <= buf->gap_start) {
+        // Entire range before gap
+        memcpy(dest, buf->data + start, len);
+    } else if (start >= buf->gap_start) {
+        // Entire range after gap
+        size_t offset = buf->gap_end - buf->gap_start;
+        memcpy(dest, buf->data + start + offset, len);
+    } else {
+        // Range spans gap
+        size_t before_gap = buf->gap_start - start;
+        memcpy(dest, buf->data + start, before_gap);
+        memcpy(dest + before_gap, buf->data + buf->gap_end, len - before_gap);
+    }
+
+    return len;
 }
 
 // Undo/Redo

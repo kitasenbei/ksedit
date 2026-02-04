@@ -63,24 +63,57 @@ void render_char(Renderer* r, int x, int y, char c, u32 fg, u32 bg)
     u32*      pixels = r->win->pixels;
     int       stride = r->win->width;
     int       scale  = r->font_scale;
+    int       w      = r->win->width;
+    int       h      = r->win->height;
 
-    for (int row = 0; row < FONT_HEIGHT; row++) {
-        u8 bits = glyph[row];
-        for (int col = 0; col < FONT_WIDTH; col++) {
-            u32 color = (bits & (0x80 >> col)) ? fg : bg;
+    // Pre-calculate bounds once
+    int char_w = FONT_WIDTH * scale;
+    int char_h = FONT_HEIGHT * scale;
 
-            // Draw scaled pixel block
+    // Quick reject if completely outside
+    if (x + char_w <= 0 || x >= w || y + char_h <= 0 || y >= h)
+        return;
+
+    // Fast path for scale=1 (most common)
+    if (scale == 1) {
+        // Calculate visible row range
+        int row_start = (y < 0) ? -y : 0;
+        int row_end   = (y + FONT_HEIGHT > h) ? h - y : FONT_HEIGHT;
+
+        // Calculate visible col range
+        int col_start = (x < 0) ? -x : 0;
+        int col_end   = (x + FONT_WIDTH > w) ? w - x : FONT_WIDTH;
+
+        for (int row = row_start; row < row_end; row++) {
+            u8   bits    = glyph[row];
+            u32* row_ptr = pixels + (y + row) * stride + x;
+
+            for (int col = col_start; col < col_end; col++) {
+                row_ptr[col] = (bits & (0x80 >> col)) ? fg : bg;
+            }
+        }
+        return;
+    }
+
+    // Scaled path - pre-calculate visible ranges
+    int row_start = (y < 0) ? (-y + scale - 1) / scale : 0;
+    int row_end   = (y + char_h > h) ? (h - y) / scale : FONT_HEIGHT;
+    int col_start = (x < 0) ? (-x + scale - 1) / scale : 0;
+    int col_end   = (x + char_w > w) ? (w - x) / scale : FONT_WIDTH;
+
+    for (int row = row_start; row < row_end; row++) {
+        u8  bits   = glyph[row];
+        int base_y = y + row * scale;
+
+        for (int col = col_start; col < col_end; col++) {
+            u32 color  = (bits & (0x80 >> col)) ? fg : bg;
+            int base_x = x + col * scale;
+
+            // Draw scaled pixel block (no bounds check needed)
             for (int sy = 0; sy < scale; sy++) {
-                int py = y + row * scale + sy;
-                if (py < 0 || py >= r->win->height)
-                    continue;
-
+                u32* row_ptr = pixels + (base_y + sy) * stride + base_x;
                 for (int sx = 0; sx < scale; sx++) {
-                    int px = x + col * scale + sx;
-                    if (px < 0 || px >= r->win->width)
-                        continue;
-
-                    pixels[py * stride + px] = color;
+                    row_ptr[sx] = color;
                 }
             }
         }
@@ -146,110 +179,107 @@ void render_buffer(Renderer* r, Buffer* buf)
     if (line_num_width < 4)
         line_num_width = 4; // Minimum 4 digits
 
-    int text_start_x = (line_num_width + 1) * char_w;
+    int text_start_x  = (line_num_width + 1) * char_w;
+    int text_cols     = visible_cols - line_num_width - 1;
+    int max_render_col = r->scroll_x + text_cols;
 
     size_t cursor_line, cursor_col;
     buffer_get_line_col(buf, &cursor_line, &cursor_col);
 
     size_t buf_len = buffer_length(buf);
 
-    // Use line index for O(1) scroll positioning
-    size_t pos  = buffer_get_line_offset(buf, r->scroll_y);
-    size_t line = r->scroll_y;
-
     // Reset comment state for visible region - don't prescan
     syntax.in_multiline_comment = false;
 
-    // Line buffer for syntax highlighting
+    // Line buffer for syntax highlighting (only need visible portion + some context)
     static char line_buf[4096];
 
-    // Render visible lines
-    for (int screen_line = 0; screen_line < visible_lines && pos <= buf_len; screen_line++) {
-        int    y            = screen_line * char_h;
+    // Render visible lines - use line index for O(1) line jumps
+    for (int screen_line = 0; screen_line < visible_lines; screen_line++) {
         size_t current_line = r->scroll_y + screen_line;
-        size_t line_start   = pos;
+        if (current_line >= total_lines)
+            break;
 
-        // Extract line for syntax highlighting
-        size_t line_len = 0;
-        size_t temp_pos = pos;
-        while (temp_pos < buf_len && line_len < sizeof(line_buf) - 1) {
-            char c = buffer_char_at(buf, temp_pos);
-            if (c == '\n')
-                break;
-            line_buf[line_len++] = c;
-            temp_pos++;
-        }
-        line_buf[line_len] = '\0';
+        int    y          = screen_line * char_h;
+        size_t line_start = buffer_get_line_offset(buf, current_line);
+        size_t line_end   = (current_line + 1 < total_lines)
+                              ? buffer_get_line_offset(buf, current_line + 1) - 1
+                              : buf_len;
+        size_t line_len   = line_end - line_start;
+
+        // Extract only the visible portion we need (scroll_x to max_render_col)
+        size_t extract_len = (size_t)max_render_col + 1;
+        if (extract_len > line_len)
+            extract_len = line_len;
+        if (extract_len > sizeof(line_buf) - 1)
+            extract_len = sizeof(line_buf) - 1;
+
+        size_t extracted = buffer_extract(buf, line_start, extract_len, line_buf);
+        line_buf[extracted] = '\0';
 
         // Run syntax highlighting (if enabled)
         if (r->syntax_enabled) {
-            syntax_highlight_line(&syntax, line_buf, line_len);
+            syntax_highlight_line(&syntax, line_buf, extracted);
         }
 
-        // Draw line number
-        char line_num_str[16];
-        snprintf(line_num_str, sizeof(line_num_str), "%*zu", line_num_width, current_line + 1);
-        for (int i = 0; i < line_num_width && line_num_str[i]; i++) {
+        // Draw line number (fast path - avoid snprintf)
+        char   line_num_str[16];
+        size_t num = current_line + 1;
+        int    pos = line_num_width - 1;
+        while (pos >= 0) {
+            line_num_str[pos--] = '0' + (num % 10);
+            num /= 10;
+            if (num == 0)
+                break;
+        }
+        while (pos >= 0) {
+            line_num_str[pos--] = ' ';
+        }
+        for (int i = 0; i < line_num_width; i++) {
             render_char(r, i * char_w, y, line_num_str[i], r->theme.line_num, r->theme.bg);
         }
 
         // Draw separator
         render_char(r, line_num_width * char_w, y, ' ', r->theme.line_num, r->theme.bg);
 
-        // Draw text with syntax highlighting
-        size_t col = 0;
-        while (pos < buf_len) {
-            char c = buffer_char_at(buf, pos);
-            if (c == '\n') {
-                pos++;
-                break;
+        // Draw text - use line_buf directly, only visible columns
+        size_t render_start = r->scroll_x < extracted ? r->scroll_x : extracted;
+        size_t render_end   = (size_t)max_render_col < extracted ? (size_t)max_render_col : extracted;
+
+        for (size_t col = render_start; col < render_end; col++) {
+            int  screen_col = col - r->scroll_x;
+            int  x          = text_start_x + screen_col * char_w;
+            char c          = line_buf[col];
+
+            size_t buf_pos     = line_start + col;
+            bool   is_cursor   = (current_line == cursor_line && col == cursor_col);
+            bool   is_selected = buf->has_selection && buf_pos >= buf->sel_start && buf_pos < buf->sel_end;
+
+            // Get syntax color
+            u32 syntax_fg = r->theme.fg;
+            if (r->syntax_enabled) {
+                TokenType token_type = syntax_get_token_at(&syntax, col);
+                syntax_fg            = get_syntax_color(r, token_type);
             }
 
-            if (col >= r->scroll_x) {
-                int screen_col = col - r->scroll_x;
-                if (screen_col < visible_cols - line_num_width - 1) {
-                    int x = text_start_x + screen_col * char_w;
+            u32 bg = is_cursor ? r->theme.cursor : (is_selected ? r->theme.selection : r->theme.bg);
+            u32 fg = is_cursor ? r->theme.bg : syntax_fg;
 
-                    bool is_cursor   = (current_line == cursor_line && col == cursor_col);
-                    bool is_selected = buf->has_selection && pos >= buf->sel_start && pos < buf->sel_end;
-
-                    // Get syntax color
-                    u32 syntax_fg = r->theme.fg;
-                    if (r->syntax_enabled) {
-                        TokenType token_type = syntax_get_token_at(&syntax, col);
-                        syntax_fg = get_syntax_color(r, token_type);
-                    }
-
-                    u32 bg = is_cursor ? r->theme.cursor : (is_selected ? r->theme.selection : r->theme.bg);
-                    u32 fg = is_cursor ? r->theme.bg : syntax_fg;
-
-                    if (c == '\t') {
-                        render_char(r, x, y, ' ', fg, bg);
-                    } else {
-                        render_char(r, x, y, c, fg, bg);
-                    }
-                }
+            if (c == '\t') {
+                render_char(r, x, y, ' ', fg, bg);
+            } else {
+                render_char(r, x, y, c, fg, bg);
             }
-
-            col++;
-            pos++;
         }
 
         // Draw cursor at end of line if needed
-        if (current_line == cursor_line && col == cursor_col) {
-            int screen_col = col - r->scroll_x;
-            if (screen_col >= 0 && screen_col < visible_cols - line_num_width - 1) {
+        if (current_line == cursor_line && cursor_col == line_len) {
+            int screen_col = cursor_col - r->scroll_x;
+            if (screen_col >= 0 && screen_col < text_cols) {
                 int x = text_start_x + screen_col * char_w;
                 render_char(r, x, y, ' ', r->theme.bg, r->theme.cursor);
             }
         }
-
-        // Handle empty line at end of buffer
-        if (pos >= buf_len && line == current_line) {
-            break;
-        }
-
-        line = current_line + 1;
     }
 }
 

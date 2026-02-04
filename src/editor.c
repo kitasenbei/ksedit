@@ -12,8 +12,14 @@ static size_t screen_to_buffer_pos(Editor* ed, int x, int y)
     int char_w = 8 * scale;
     int char_h = 16 * scale;
 
+    // Use line index for O(1) line count
+    size_t total_lines = ed->buffer->line_count;
+    if (total_lines == 0) {
+        buffer_rebuild_line_index(ed->buffer);
+        total_lines = ed->buffer->line_count;
+    }
+
     // Calculate line number width
-    size_t total_lines    = buffer_line_count(ed->buffer);
     int    line_num_width = 1;
     size_t n              = total_lines;
     while (n >= 10) {
@@ -34,20 +40,11 @@ static size_t screen_to_buffer_pos(Editor* ed, int x, int y)
     size_t target_line = ed->renderer.scroll_y + clicked_line;
     size_t target_col  = ed->renderer.scroll_x + clicked_col;
 
-    // Find position in buffer
-    size_t pos     = 0;
-    size_t line    = 0;
+    // Use line index for O(1) jump to target line
+    size_t pos     = buffer_get_line_offset(ed->buffer, target_line);
     size_t buf_len = buffer_length(ed->buffer);
 
-    // Skip to target line
-    while (line < target_line && pos < buf_len) {
-        if (buffer_char_at(ed->buffer, pos) == '\n') {
-            line++;
-        }
-        pos++;
-    }
-
-    // Move to target column
+    // Move to target column (only scan within the line)
     size_t col = 0;
     while (col < target_col && pos < buf_len) {
         char c = buffer_char_at(ed->buffer, pos);

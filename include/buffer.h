@@ -63,9 +63,10 @@ char* buffer_get_selection(Buffer* buf, size_t* out_len);
 void  buffer_delete_selection(Buffer* buf);
 
 // Bulk operations
-void  buffer_insert_text(Buffer* buf, const char* text, size_t len);
-void  buffer_delete_range(Buffer* buf, size_t start, size_t end);
-char* buffer_get_range(Buffer* buf, size_t start, size_t end);
+void   buffer_insert_text(Buffer* buf, const char* text, size_t len);
+void   buffer_delete_range(Buffer* buf, size_t start, size_t end);
+char*  buffer_get_range(Buffer* buf, size_t start, size_t end);
+size_t buffer_extract(Buffer* buf, size_t start, size_t len, char* dest);
 
 // Undo/Redo
 void buffer_undo(Buffer* buf);
