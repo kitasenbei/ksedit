@@ -29,6 +29,10 @@ typedef struct
     size_t* line_offsets;
     size_t  line_count;
     size_t  line_capacity;
+
+    // Delta tracking for O(1) edits
+    size_t dirty_from_line;  // Lines >= this have stale offsets
+    i64    offset_delta;     // Delta to add to stale offsets
 } Buffer;
 
 Buffer* buffer_create(size_t initial_capacity);
