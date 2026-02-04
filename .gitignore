@@ -3,3 +3,7 @@ ksedit
 *.o
 vgcore.*
 core
+test_buffer
+test_undo
+test_history
+fuzz_buffer
