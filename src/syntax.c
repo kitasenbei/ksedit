@@ -86,7 +86,7 @@ void syntax_highlight_line(SyntaxState* state, const char* line, size_t len)
     // Continue multiline comment from previous line
     if (state->in_multiline_comment) {
         size_t start = 0;
-        while (i < len - 1) {
+        while (i + 1 < len) {
             if (line[i] == '*' && line[i + 1] == '/') {
                 add_token(state, TOKEN_COMMENT, start, i + 2 - start);
                 state->in_multiline_comment = false;
@@ -126,7 +126,7 @@ void syntax_highlight_line(SyntaxState* state, const char* line, size_t len)
         if (c == '/' && i + 1 < len && line[i + 1] == '*') {
             size_t start = i;
             i += 2;
-            while (i < len - 1) {
+            while (i + 1 < len) {
                 if (line[i] == '*' && line[i + 1] == '/') {
                     add_token(state, TOKEN_COMMENT, start, i + 2 - start);
                     i += 2;
