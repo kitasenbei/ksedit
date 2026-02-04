@@ -32,6 +32,7 @@ typedef struct
     size_t        scroll_y;
     size_t        scroll_x;
     int           font_scale;
+    bool          syntax_enabled;
 } Renderer;
 
 void render_init(Renderer* r, Window_State* win);

@@ -22,6 +22,7 @@ typedef struct
     Renderer     renderer;
     EditorMode   mode;
     bool         running;
+    bool         syntax_enabled;
     bool         dragging_scrollbar;
     bool         dragging_selection;
     int          last_mouse_x;

@@ -132,8 +132,9 @@ bool editor_init(Editor* ed, int width, int height)
     }
 
     render_init(&ed->renderer, &ed->window);
-    ed->mode    = MODE_INSERT;
-    ed->running = true;
+    ed->mode           = MODE_INSERT;
+    ed->running        = true;
+    ed->syntax_enabled = true;
     editor_set_status(ed, "Ctrl+S: Save | Ctrl+Q: Quit");
 
     return true;
@@ -355,6 +356,12 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             ed->input_len    = 0;
             ed->input_buf[0] = '\0';
             editor_set_status(ed, "Goto line: ");
+            break;
+
+        case KEY_CTRL_H:
+            ed->syntax_enabled = !ed->syntax_enabled;
+            ed->renderer.syntax_enabled = ed->syntax_enabled;
+            editor_set_status(ed, ed->syntax_enabled ? "Syntax ON" : "Syntax OFF");
             break;
 
         case KEY_CTRL_D:

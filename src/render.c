@@ -6,10 +6,11 @@
 
 void render_init(Renderer* r, Window_State* win)
 {
-    r->win        = win;
-    r->scroll_x   = 0;
-    r->scroll_y   = 0;
-    r->font_scale = 1;
+    r->win            = win;
+    r->scroll_x       = 0;
+    r->scroll_y       = 0;
+    r->font_scale     = 1;
+    r->syntax_enabled = true;
 
     // Dark theme (VS Code inspired)
     r->theme.bg        = 0x1e1e1e;
@@ -199,8 +200,10 @@ void render_buffer(Renderer* r, Buffer* buf)
         }
         line_buf[line_len] = '\0';
 
-        // Run syntax highlighting
-        syntax_highlight_line(&syntax, line_buf, line_len);
+        // Run syntax highlighting (if enabled)
+        if (r->syntax_enabled) {
+            syntax_highlight_line(&syntax, line_buf, line_len);
+        }
 
         // Draw line number
         char line_num_str[16];
@@ -230,8 +233,11 @@ void render_buffer(Renderer* r, Buffer* buf)
                     bool is_selected = buf->has_selection && pos >= buf->sel_start && pos < buf->sel_end;
 
                     // Get syntax color
-                    TokenType token_type = syntax_get_token_at(&syntax, col);
-                    u32       syntax_fg  = get_syntax_color(r, token_type);
+                    u32 syntax_fg = r->theme.fg;
+                    if (r->syntax_enabled) {
+                        TokenType token_type = syntax_get_token_at(&syntax, col);
+                        syntax_fg = get_syntax_color(r, token_type);
+                    }
 
                     u32 bg = is_cursor ? r->theme.cursor : (is_selected ? r->theme.selection : r->theme.bg);
                     u32 fg = is_cursor ? r->theme.bg : syntax_fg;

@@ -83,6 +83,10 @@ InputEvent input_poll(Window_State* win)
             case XK_A:
                 ev.key.type = KEY_CTRL_A;
                 return ev;
+            case XK_h:
+            case XK_H:
+                ev.key.type = KEY_CTRL_H;
+                return ev;
             case XK_d:
             case XK_D:
                 ev.key.type = KEY_CTRL_D;

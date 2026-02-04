@@ -31,6 +31,7 @@ typedef enum {
     KEY_CTRL_F,
     KEY_CTRL_G,
     KEY_CTRL_A,
+    KEY_CTRL_H,
     KEY_CTRL_D,
     KEY_CTRL_K,
     KEY_CTRL_HOME,
