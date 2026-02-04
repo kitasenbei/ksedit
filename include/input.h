@@ -41,6 +41,8 @@ typedef enum {
     KEY_CTRL_DELETE,
     KEY_ALT_UP,
     KEY_ALT_DOWN,
+    KEY_ALT_LEFT,
+    KEY_ALT_RIGHT,
     KEY_SCROLL_UP,
     KEY_SCROLL_DOWN,
 } KeyType;

@@ -92,6 +92,63 @@ static void editor_scroll_to_cursor(Editor* ed)
     }
 }
 
+#define POS_HISTORY_SIZE 64
+
+static void editor_push_position(Editor* ed)
+{
+    size_t pos = ed->buffer->cursor;
+
+    // Don't push if same as current position
+    if (ed->pos_history_count > 0 && ed->pos_history_index > 0) {
+        if (ed->pos_history[ed->pos_history_index - 1] == pos)
+            return;
+    }
+
+    // If we're not at the end of history, truncate forward history
+    if (ed->pos_history_index < ed->pos_history_count) {
+        ed->pos_history_count = ed->pos_history_index;
+    }
+
+    // Push new position
+    if (ed->pos_history_count < POS_HISTORY_SIZE) {
+        ed->pos_history[ed->pos_history_count++] = pos;
+        ed->pos_history_index = ed->pos_history_count;
+    } else {
+        // Shift history left
+        for (int i = 1; i < POS_HISTORY_SIZE; i++) {
+            ed->pos_history[i - 1] = ed->pos_history[i];
+        }
+        ed->pos_history[POS_HISTORY_SIZE - 1] = pos;
+        ed->pos_history_index = POS_HISTORY_SIZE;
+    }
+}
+
+static void editor_jump_back(Editor* ed)
+{
+    if (ed->pos_history_index <= 1)
+        return;
+
+    // Save current position if at end of history
+    if (ed->pos_history_index == ed->pos_history_count) {
+        editor_push_position(ed);
+        ed->pos_history_index--;
+    }
+
+    ed->pos_history_index--;
+    buffer_move_cursor_to(ed->buffer, ed->pos_history[ed->pos_history_index - 1]);
+    editor_scroll_to_cursor(ed);
+}
+
+static void editor_jump_forward(Editor* ed)
+{
+    if (ed->pos_history_index >= ed->pos_history_count)
+        return;
+
+    ed->pos_history_index++;
+    buffer_move_cursor_to(ed->buffer, ed->pos_history[ed->pos_history_index - 1]);
+    editor_scroll_to_cursor(ed);
+}
+
 bool editor_init(Editor* ed, int width, int height)
 {
     memset(ed, 0, sizeof(Editor));
@@ -159,6 +216,7 @@ static void editor_handle_find_mode(Editor* ed, InputEvent* ev)
         if (pos < 0)
             pos = buffer_find(ed->buffer, ed->input_buf, 0); // Wrap
         if (pos >= 0) {
+            editor_push_position(ed);
             buffer_move_cursor_to(ed->buffer, pos);
             buffer_start_selection(ed->buffer);
             buffer_move_cursor(ed->buffer, ed->input_len);
@@ -207,6 +265,7 @@ static void editor_handle_goto_mode(Editor* ed, InputEvent* ev)
         ed->input_buf[ed->input_len] = '\0';
         int line                     = atoi(ed->input_buf);
         if (line > 0) {
+            editor_push_position(ed);
             buffer_goto_line(ed->buffer, line);
             editor_scroll_to_cursor(ed);
             char msg[64];
@@ -343,6 +402,7 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             break;
 
         case KEY_CTRL_HOME:
+            editor_push_position(ed);
             if (ev->key.shift) {
                 if (!ed->buffer->has_selection)
                     buffer_start_selection(ed->buffer);
@@ -356,6 +416,7 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             break;
 
         case KEY_CTRL_END:
+            editor_push_position(ed);
             if (ev->key.shift) {
                 if (!ed->buffer->has_selection)
                     buffer_start_selection(ed->buffer);
@@ -420,6 +481,14 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
         case KEY_ALT_DOWN:
             buffer_move_line_down(ed->buffer);
             editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_ALT_LEFT:
+            editor_jump_back(ed);
+            break;
+
+        case KEY_ALT_RIGHT:
+            editor_jump_forward(ed);
             break;
 
         case KEY_CHAR:

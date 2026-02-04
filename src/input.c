@@ -121,6 +121,12 @@ InputEvent input_poll(Window_State* win)
             case XK_Down:
                 ev.key.type = KEY_ALT_DOWN;
                 return ev;
+            case XK_Left:
+                ev.key.type = KEY_ALT_LEFT;
+                return ev;
+            case XK_Right:
+                ev.key.type = KEY_ALT_RIGHT;
+                return ev;
             }
         }
 

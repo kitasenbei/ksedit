@@ -34,6 +34,11 @@ typedef struct
     // Clipboard
     char*  clipboard;
     size_t clipboard_len;
+
+    // Position history (for jump back/forward)
+    size_t pos_history[64];
+    int    pos_history_count;
+    int    pos_history_index;
 } Editor;
 
 bool editor_init(Editor* ed, int width, int height);
