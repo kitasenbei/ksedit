@@ -579,10 +579,35 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             }
         } else if (ed->dragging_selection && ev->mouse.pressed) {
             // Extend selection while dragging
-            size_t pos = screen_to_buffer_pos(ed, ev->mouse.x, ev->mouse.y);
+            int    scale         = ed->renderer.font_scale;
+            int    char_h        = 16 * scale;
+            int    status_height = char_h + 4;
+            int    visible_lines = render_visible_lines(&ed->renderer);
+            size_t total_lines   = buffer_line_count(ed->buffer);
+
+            // Auto-scroll when dragging past edges
+            if (ev->mouse.y < 0) {
+                // Scroll up
+                if (ed->renderer.scroll_y > 0) {
+                    ed->renderer.scroll_y--;
+                }
+            } else if (ev->mouse.y >= ed->window.height - status_height) {
+                // Scroll down
+                if (ed->renderer.scroll_y + visible_lines < total_lines) {
+                    ed->renderer.scroll_y++;
+                }
+            }
+
+            // Clamp mouse y to valid range for position calculation
+            int clamped_y = ev->mouse.y;
+            if (clamped_y < 0)
+                clamped_y = 0;
+            if (clamped_y >= ed->window.height - status_height)
+                clamped_y = ed->window.height - status_height - 1;
+
+            size_t pos = screen_to_buffer_pos(ed, ev->mouse.x, clamped_y);
             buffer_move_cursor_to(ed->buffer, pos);
             buffer_update_selection(ed->buffer);
-            editor_scroll_to_cursor(ed);
         } else {
             ed->dragging_scrollbar = false;
             ed->dragging_selection = false;
