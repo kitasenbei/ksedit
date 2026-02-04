@@ -332,6 +332,96 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             editor_set_status(ed, "Goto line: ");
             break;
 
+        case KEY_CTRL_D:
+            buffer_duplicate_line(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_K:
+            buffer_delete_line(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_HOME:
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_cursor_to(ed->buffer, 0);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_cursor_to(ed->buffer, 0);
+            }
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_END:
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_cursor_to(ed->buffer, buffer_length(ed->buffer));
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_cursor_to(ed->buffer, buffer_length(ed->buffer));
+            }
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_LEFT:
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_word_left(ed->buffer);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_word_left(ed->buffer);
+            }
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_RIGHT:
+            if (ev->key.shift) {
+                if (!ed->buffer->has_selection)
+                    buffer_start_selection(ed->buffer);
+                buffer_move_word_right(ed->buffer);
+                buffer_update_selection(ed->buffer);
+            } else {
+                buffer_clear_selection(ed->buffer);
+                buffer_move_word_right(ed->buffer);
+            }
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_BACKSPACE:
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            } else {
+                buffer_delete_word_backward(ed->buffer);
+            }
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_CTRL_DELETE:
+            if (buffer_has_selection(ed->buffer)) {
+                buffer_delete_selection(ed->buffer);
+            } else {
+                buffer_delete_word_forward(ed->buffer);
+            }
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_ALT_UP:
+            buffer_move_line_up(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            break;
+
+        case KEY_ALT_DOWN:
+            buffer_move_line_down(ed->buffer);
+            editor_scroll_to_cursor(ed);
+            break;
+
         case KEY_CHAR:
             if (buffer_has_selection(ed->buffer)) {
                 buffer_delete_selection(ed->buffer);
@@ -556,11 +646,23 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
                     ed->renderer.scroll_y = new_scroll;
                 }
             } else {
-                // Click in text area - move cursor and start selection
+                // Click in text area
                 size_t pos = screen_to_buffer_pos(ed, ev->mouse.x, ev->mouse.y);
                 buffer_move_cursor_to(ed->buffer, pos);
-                buffer_start_selection(ed->buffer);
-                ed->dragging_selection = true;
+
+                if (ev->mouse.click_count == 3) {
+                    // Triple click - select line
+                    buffer_select_line(ed->buffer);
+                    ed->dragging_selection = false;
+                } else if (ev->mouse.click_count == 2) {
+                    // Double click - select word
+                    buffer_select_word(ed->buffer);
+                    ed->dragging_selection = false;
+                } else {
+                    // Single click - start selection
+                    buffer_start_selection(ed->buffer);
+                    ed->dragging_selection = true;
+                }
                 ed->dragging_scrollbar = false;
                 ed->last_mouse_x       = ev->mouse.x;
                 ed->last_mouse_y       = ev->mouse.y;

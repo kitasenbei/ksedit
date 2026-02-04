@@ -560,3 +560,324 @@ void buffer_goto_line(Buffer* buf, size_t target_line)
 
     buffer_move_cursor_to(buf, pos);
 }
+
+// Helper: check if character is a word character
+static bool is_word_char(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Word operations
+void buffer_move_word_left(Buffer* buf)
+{
+    if (buf->cursor == 0)
+        return;
+
+    // Skip whitespace/non-word chars first
+    while (buf->cursor > 0 && !is_word_char(buffer_char_at(buf, buf->cursor - 1))) {
+        buf->cursor--;
+    }
+    // Then skip word chars
+    while (buf->cursor > 0 && is_word_char(buffer_char_at(buf, buf->cursor - 1))) {
+        buf->cursor--;
+    }
+
+    // Update line/col
+    buffer_move_cursor_to(buf, buf->cursor);
+}
+
+void buffer_move_word_right(Buffer* buf)
+{
+    size_t len = buffer_length(buf);
+    if (buf->cursor >= len)
+        return;
+
+    // Skip current word chars first
+    while (buf->cursor < len && is_word_char(buffer_char_at(buf, buf->cursor))) {
+        buf->cursor++;
+    }
+    // Then skip whitespace/non-word chars
+    while (buf->cursor < len && !is_word_char(buffer_char_at(buf, buf->cursor))) {
+        buf->cursor++;
+    }
+
+    // Update line/col
+    buffer_move_cursor_to(buf, buf->cursor);
+}
+
+void buffer_delete_word_backward(Buffer* buf)
+{
+    if (buf->cursor == 0)
+        return;
+
+    size_t end = buf->cursor;
+
+    // Skip whitespace first
+    while (buf->cursor > 0 && !is_word_char(buffer_char_at(buf, buf->cursor - 1))) {
+        buf->cursor--;
+    }
+    // Then skip word chars
+    while (buf->cursor > 0 && is_word_char(buffer_char_at(buf, buf->cursor - 1))) {
+        buf->cursor--;
+    }
+
+    size_t start = buf->cursor;
+    buffer_move_cursor_to(buf, start);
+    buffer_delete_range(buf, start, end);
+}
+
+void buffer_delete_word_forward(Buffer* buf)
+{
+    size_t len = buffer_length(buf);
+    if (buf->cursor >= len)
+        return;
+
+    size_t start = buf->cursor;
+    size_t end   = buf->cursor;
+
+    // Skip current word chars first
+    while (end < len && is_word_char(buffer_char_at(buf, end))) {
+        end++;
+    }
+    // Then skip whitespace
+    while (end < len && !is_word_char(buffer_char_at(buf, end))) {
+        end++;
+    }
+
+    buffer_delete_range(buf, start, end);
+}
+
+// Line operations
+void buffer_duplicate_line(Buffer* buf)
+{
+    // Find line start and end
+    size_t line_start = buf->cursor;
+    while (line_start > 0 && buffer_char_at(buf, line_start - 1) != '\n') {
+        line_start--;
+    }
+
+    size_t line_end = buf->cursor;
+    size_t len      = buffer_length(buf);
+    while (line_end < len && buffer_char_at(buf, line_end) != '\n') {
+        line_end++;
+    }
+
+    // Get line content
+    size_t line_len = line_end - line_start;
+    char*  line     = malloc(line_len + 2); // +2 for newline and null
+    for (size_t i = 0; i < line_len; i++) {
+        line[i] = buffer_char_at(buf, line_start + i);
+    }
+    line[line_len]     = '\n';
+    line[line_len + 1] = '\0';
+
+    // Move to end of line and insert
+    buffer_move_cursor_to(buf, line_end);
+    if (line_end < len) {
+        // There's a newline after, insert before it
+        buffer_insert_text(buf, "\n", 1);
+        buffer_move_cursor(buf, -1);
+        buffer_insert_text(buf, line, line_len);
+    } else {
+        // At end of file
+        buffer_insert_text(buf, "\n", 1);
+        buffer_insert_text(buf, line, line_len);
+    }
+
+    free(line);
+}
+
+void buffer_delete_line(Buffer* buf)
+{
+    // Find line start
+    size_t line_start = buf->cursor;
+    while (line_start > 0 && buffer_char_at(buf, line_start - 1) != '\n') {
+        line_start--;
+    }
+
+    // Find line end (including newline)
+    size_t line_end = buf->cursor;
+    size_t len      = buffer_length(buf);
+    while (line_end < len && buffer_char_at(buf, line_end) != '\n') {
+        line_end++;
+    }
+    if (line_end < len) {
+        line_end++; // Include the newline
+    }
+
+    // If this is the last line and there's a newline before, include it
+    if (line_end == len && line_start > 0) {
+        line_start--; // Include preceding newline instead
+    }
+
+    buffer_delete_range(buf, line_start, line_end);
+    buffer_move_cursor_to(buf, line_start);
+}
+
+void buffer_move_line_up(Buffer* buf)
+{
+    if (buf->line == 0)
+        return;
+
+    // Find current line boundaries
+    size_t curr_start = buf->cursor;
+    while (curr_start > 0 && buffer_char_at(buf, curr_start - 1) != '\n') {
+        curr_start--;
+    }
+
+    size_t curr_end = buf->cursor;
+    size_t len      = buffer_length(buf);
+    while (curr_end < len && buffer_char_at(buf, curr_end) != '\n') {
+        curr_end++;
+    }
+
+    // Find previous line start
+    size_t prev_start = curr_start - 1; // Point to newline before current line
+    while (prev_start > 0 && buffer_char_at(buf, prev_start - 1) != '\n') {
+        prev_start--;
+    }
+
+    // Get current line content
+    size_t curr_len = curr_end - curr_start;
+    char*  curr     = malloc(curr_len + 1);
+    for (size_t i = 0; i < curr_len; i++) {
+        curr[i] = buffer_char_at(buf, curr_start + i);
+    }
+    curr[curr_len] = '\0';
+
+    // Calculate cursor offset within line
+    size_t cursor_offset = buf->cursor - curr_start;
+
+    // Delete current line (including newline before it)
+    size_t delete_start = curr_start > 0 ? curr_start - 1 : curr_start;
+    size_t delete_end   = curr_end;
+    buffer_delete_range(buf, delete_start, delete_end);
+
+    // Insert at previous line start
+    buffer_move_cursor_to(buf, prev_start);
+    buffer_insert_text(buf, curr, curr_len);
+    buffer_insert_text(buf, "\n", 1);
+
+    // Restore cursor position within line
+    buffer_move_cursor_to(buf, prev_start + cursor_offset);
+
+    free(curr);
+}
+
+void buffer_move_line_down(Buffer* buf)
+{
+    size_t len = buffer_length(buf);
+
+    // Find current line boundaries
+    size_t curr_start = buf->cursor;
+    while (curr_start > 0 && buffer_char_at(buf, curr_start - 1) != '\n') {
+        curr_start--;
+    }
+
+    size_t curr_end = buf->cursor;
+    while (curr_end < len && buffer_char_at(buf, curr_end) != '\n') {
+        curr_end++;
+    }
+
+    // Check if there's a next line
+    if (curr_end >= len)
+        return;
+
+    // Find next line end
+    size_t next_end = curr_end + 1;
+    while (next_end < len && buffer_char_at(buf, next_end) != '\n') {
+        next_end++;
+    }
+
+    // Get current line content
+    size_t curr_len = curr_end - curr_start;
+    char*  curr     = malloc(curr_len + 1);
+    for (size_t i = 0; i < curr_len; i++) {
+        curr[i] = buffer_char_at(buf, curr_start + i);
+    }
+    curr[curr_len] = '\0';
+
+    // Calculate cursor offset within line
+    size_t cursor_offset = buf->cursor - curr_start;
+
+    // Delete current line (including newline after it)
+    buffer_delete_range(buf, curr_start, curr_end + 1);
+
+    // Recalculate next_end after deletion
+    len      = buffer_length(buf);
+    next_end = curr_start;
+    while (next_end < len && buffer_char_at(buf, next_end) != '\n') {
+        next_end++;
+    }
+
+    // Insert after the (now previous) next line
+    buffer_move_cursor_to(buf, next_end);
+    buffer_insert_text(buf, "\n", 1);
+    buffer_insert_text(buf, curr, curr_len);
+
+    // Restore cursor position within line
+    buffer_move_cursor_to(buf, next_end + 1 + cursor_offset);
+
+    free(curr);
+}
+
+// Word/line selection
+void buffer_select_word(Buffer* buf)
+{
+    size_t len = buffer_length(buf);
+    if (buf->cursor >= len)
+        return;
+
+    // If not on a word char, select surrounding non-word chars
+    char c          = buffer_char_at(buf, buf->cursor);
+    bool word_chars = is_word_char(c);
+
+    // Find word start
+    size_t start = buf->cursor;
+    while (start > 0) {
+        char prev = buffer_char_at(buf, start - 1);
+        if (is_word_char(prev) != word_chars)
+            break;
+        start--;
+    }
+
+    // Find word end
+    size_t end = buf->cursor;
+    while (end < len) {
+        char next = buffer_char_at(buf, end);
+        if (is_word_char(next) != word_chars)
+            break;
+        end++;
+    }
+
+    // Create selection
+    buffer_move_cursor_to(buf, start);
+    buffer_start_selection(buf);
+    buffer_move_cursor_to(buf, end);
+    buffer_update_selection(buf);
+}
+
+void buffer_select_line(Buffer* buf)
+{
+    // Find line start
+    size_t line_start = buf->cursor;
+    while (line_start > 0 && buffer_char_at(buf, line_start - 1) != '\n') {
+        line_start--;
+    }
+
+    // Find line end (including newline)
+    size_t line_end = buf->cursor;
+    size_t len      = buffer_length(buf);
+    while (line_end < len && buffer_char_at(buf, line_end) != '\n') {
+        line_end++;
+    }
+    if (line_end < len) {
+        line_end++; // Include the newline
+    }
+
+    // Create selection
+    buffer_move_cursor_to(buf, line_start);
+    buffer_start_selection(buf);
+    buffer_move_cursor_to(buf, line_end);
+    buffer_update_selection(buf);
+}

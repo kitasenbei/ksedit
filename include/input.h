@@ -31,6 +31,16 @@ typedef enum {
     KEY_CTRL_F,
     KEY_CTRL_G,
     KEY_CTRL_A,
+    KEY_CTRL_D,
+    KEY_CTRL_K,
+    KEY_CTRL_HOME,
+    KEY_CTRL_END,
+    KEY_CTRL_LEFT,
+    KEY_CTRL_RIGHT,
+    KEY_CTRL_BACKSPACE,
+    KEY_CTRL_DELETE,
+    KEY_ALT_UP,
+    KEY_ALT_DOWN,
     KEY_SCROLL_UP,
     KEY_SCROLL_DOWN,
 } KeyType;
@@ -50,6 +60,7 @@ typedef struct
     int  y;
     bool pressed;
     int  button;
+    int  click_count; // 1=single, 2=double, 3=triple
 } MouseEvent;
 
 typedef enum {

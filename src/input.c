@@ -1,6 +1,15 @@
 #include "input.h"
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
+#include <time.h>
+
+// For double/triple click detection
+static Time    last_click_time = 0;
+static int     click_count     = 0;
+static int     last_click_x    = 0;
+static int     last_click_y    = 0;
+#define DOUBLE_CLICK_TIME 300  // ms
+#define CLICK_DISTANCE    5    // pixels
 
 InputEvent input_poll(Window_State* win)
 {
@@ -73,6 +82,44 @@ InputEvent input_poll(Window_State* win)
             case XK_a:
             case XK_A:
                 ev.key.type = KEY_CTRL_A;
+                return ev;
+            case XK_d:
+            case XK_D:
+                ev.key.type = KEY_CTRL_D;
+                return ev;
+            case XK_k:
+            case XK_K:
+                ev.key.type = KEY_CTRL_K;
+                return ev;
+            case XK_Home:
+                ev.key.type = KEY_CTRL_HOME;
+                return ev;
+            case XK_End:
+                ev.key.type = KEY_CTRL_END;
+                return ev;
+            case XK_Left:
+                ev.key.type = KEY_CTRL_LEFT;
+                return ev;
+            case XK_Right:
+                ev.key.type = KEY_CTRL_RIGHT;
+                return ev;
+            case XK_BackSpace:
+                ev.key.type = KEY_CTRL_BACKSPACE;
+                return ev;
+            case XK_Delete:
+                ev.key.type = KEY_CTRL_DELETE;
+                return ev;
+            }
+        }
+
+        // Handle alt keys
+        if (ev.key.alt) {
+            switch (keysym) {
+            case XK_Up:
+                ev.key.type = KEY_ALT_UP;
+                return ev;
+            case XK_Down:
+                ev.key.type = KEY_ALT_DOWN;
                 return ev;
             }
         }
@@ -154,11 +201,32 @@ InputEvent input_poll(Window_State* win)
             ev.key.ctrl = (xev.xbutton.state & ControlMask) != 0;
             break;
         }
-        ev.type          = EVENT_MOUSE;
-        ev.mouse.x       = xev.xbutton.x;
-        ev.mouse.y       = xev.xbutton.y;
-        ev.mouse.button  = xev.xbutton.button;
-        ev.mouse.pressed = true;
+
+        // Detect double/triple clicks
+        Time current_time = xev.xbutton.time;
+        int  dx           = xev.xbutton.x - last_click_x;
+        int  dy           = xev.xbutton.y - last_click_y;
+        bool same_spot    = (dx * dx + dy * dy) < (CLICK_DISTANCE * CLICK_DISTANCE);
+        bool quick_click  = (current_time - last_click_time) < DOUBLE_CLICK_TIME;
+
+        if (xev.xbutton.button == 1 && same_spot && quick_click) {
+            click_count++;
+            if (click_count > 3)
+                click_count = 1;
+        } else {
+            click_count = 1;
+        }
+
+        last_click_time = current_time;
+        last_click_x    = xev.xbutton.x;
+        last_click_y    = xev.xbutton.y;
+
+        ev.type             = EVENT_MOUSE;
+        ev.mouse.x          = xev.xbutton.x;
+        ev.mouse.y          = xev.xbutton.y;
+        ev.mouse.button     = xev.xbutton.button;
+        ev.mouse.pressed    = true;
+        ev.mouse.click_count = click_count;
         break;
     }
 

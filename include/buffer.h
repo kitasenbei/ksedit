@@ -73,4 +73,20 @@ i64 buffer_find_next(Buffer* buf, const char* needle);
 // Goto
 void buffer_goto_line(Buffer* buf, size_t line);
 
+// Word operations
+void buffer_move_word_left(Buffer* buf);
+void buffer_move_word_right(Buffer* buf);
+void buffer_delete_word_backward(Buffer* buf);
+void buffer_delete_word_forward(Buffer* buf);
+
+// Line operations
+void buffer_duplicate_line(Buffer* buf);
+void buffer_delete_line(Buffer* buf);
+void buffer_move_line_up(Buffer* buf);
+void buffer_move_line_down(Buffer* buf);
+
+// Word/line selection
+void buffer_select_word(Buffer* buf);
+void buffer_select_line(Buffer* buf);
+
 #endif
