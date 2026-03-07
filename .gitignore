@@ -1,9 +1,19 @@
 build/
 ksedit
+
+# Object files
 *.o
+
+# Core dumps
 vgcore.*
 core
+
+# Test/bench binaries
 test_buffer
 test_undo
 test_history
 fuzz_buffer
+bench_*
+
+# Large test data
+*.txt

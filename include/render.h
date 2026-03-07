@@ -31,7 +31,7 @@ typedef struct
     Theme         theme;
     size_t        scroll_y;
     size_t        scroll_x;
-    int           font_scale;
+    float         font_scale;
     bool          syntax_enabled;
 } Renderer;
 

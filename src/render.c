@@ -9,7 +9,7 @@ void render_init(Renderer* r, Window_State* win)
     r->win            = win;
     r->scroll_x       = 0;
     r->scroll_y       = 0;
-    r->font_scale     = 1;
+    r->font_scale     = 1.0f;
     r->syntax_enabled = true;
 
     // Dark theme (VS Code inspired)
@@ -62,25 +62,22 @@ void render_char(Renderer* r, int x, int y, char c, u32 fg, u32 bg)
     const u8* glyph  = font_get_glyph(c);
     u32*      pixels = r->win->pixels;
     int       stride = r->win->width;
-    int       scale  = r->font_scale;
+    float     scale  = r->font_scale;
     int       w      = r->win->width;
     int       h      = r->win->height;
 
     // Pre-calculate bounds once
-    int char_w = FONT_WIDTH * scale;
-    int char_h = FONT_HEIGHT * scale;
+    int char_w = (int)(FONT_WIDTH * scale);
+    int char_h = (int)(FONT_HEIGHT * scale);
 
     // Quick reject if completely outside
     if (x + char_w <= 0 || x >= w || y + char_h <= 0 || y >= h)
         return;
 
     // Fast path for scale=1 (most common)
-    if (scale == 1) {
-        // Calculate visible row range
+    if (scale == 1.0f) {
         int row_start = (y < 0) ? -y : 0;
         int row_end   = (y + FONT_HEIGHT > h) ? h - y : FONT_HEIGHT;
-
-        // Calculate visible col range
         int col_start = (x < 0) ? -x : 0;
         int col_end   = (x + FONT_WIDTH > w) ? w - x : FONT_WIDTH;
 
@@ -95,25 +92,29 @@ void render_char(Renderer* r, int x, int y, char c, u32 fg, u32 bg)
         return;
     }
 
-    // Scaled path - pre-calculate visible ranges
-    int row_start = (y < 0) ? (-y + scale - 1) / scale : 0;
-    int row_end   = (y + char_h > h) ? (h - y) / scale : FONT_HEIGHT;
-    int col_start = (x < 0) ? (-x + scale - 1) / scale : 0;
-    int col_end   = (x + char_w > w) ? (w - x) / scale : FONT_WIDTH;
+    // Scaled path using float positions for fractional scales
+    for (int row = 0; row < FONT_HEIGHT; row++) {
+        u8  bits = glyph[row];
+        int py0  = y + (int)(row * scale);
+        int py1  = y + (int)((row + 1) * scale);
+        if (py0 >= h) break;
+        if (py1 <= 0) continue;
+        if (py0 < 0) py0 = 0;
+        if (py1 > h) py1 = h;
 
-    for (int row = row_start; row < row_end; row++) {
-        u8  bits   = glyph[row];
-        int base_y = y + row * scale;
+        for (int col = 0; col < FONT_WIDTH; col++) {
+            u32 color = (bits & (0x80 >> col)) ? fg : bg;
+            int px0   = x + (int)(col * scale);
+            int px1   = x + (int)((col + 1) * scale);
+            if (px0 >= w) break;
+            if (px1 <= 0) continue;
+            if (px0 < 0) px0 = 0;
+            if (px1 > w) px1 = w;
 
-        for (int col = col_start; col < col_end; col++) {
-            u32 color  = (bits & (0x80 >> col)) ? fg : bg;
-            int base_x = x + col * scale;
-
-            // Draw scaled pixel block (no bounds check needed)
-            for (int sy = 0; sy < scale; sy++) {
-                u32* row_ptr = pixels + (base_y + sy) * stride + base_x;
-                for (int sx = 0; sx < scale; sx++) {
-                    row_ptr[sx] = color;
+            for (int py = py0; py < py1; py++) {
+                u32* row_ptr = pixels + py * stride + px0;
+                for (int px = px0; px < px1; px++) {
+                    *row_ptr++ = color;
                 }
             }
         }
@@ -122,12 +123,12 @@ void render_char(Renderer* r, int x, int y, char c, u32 fg, u32 bg)
 
 int render_visible_lines(Renderer* r)
 {
-    int scale         = r->font_scale;
-    int status_height = FONT_HEIGHT * scale + 4;
-    return (r->win->height - status_height) / (FONT_HEIGHT * scale);
+    int char_h        = (int)(FONT_HEIGHT * r->font_scale);
+    int status_height = char_h + 4;
+    return (r->win->height - status_height) / char_h;
 }
 
-int render_visible_cols(Renderer* r) { return r->win->width / (FONT_WIDTH * r->font_scale); }
+int render_visible_cols(Renderer* r) { return r->win->width / (int)(FONT_WIDTH * r->font_scale); }
 
 static u32 get_syntax_color(Renderer* r, TokenType type)
 {
@@ -162,9 +163,8 @@ void render_buffer(Renderer* r, Buffer* buf)
         syntax_initialized = true;
     }
 
-    int scale         = r->font_scale;
-    int char_w        = FONT_WIDTH * scale;
-    int char_h        = FONT_HEIGHT * scale;
+    int char_w        = (int)(FONT_WIDTH * r->font_scale);
+    int char_h        = (int)(FONT_HEIGHT * r->font_scale);
     int visible_lines = render_visible_lines(r);
     int visible_cols  = render_visible_cols(r);
 
@@ -285,9 +285,8 @@ void render_buffer(Renderer* r, Buffer* buf)
 
 void render_status_bar(Renderer* r, Buffer* buf)
 {
-    int scale         = r->font_scale;
-    int char_w        = FONT_WIDTH * scale;
-    int char_h        = FONT_HEIGHT * scale;
+    int char_w        = (int)(FONT_WIDTH * r->font_scale);
+    int char_h        = (int)(FONT_HEIGHT * r->font_scale);
     int status_height = char_h + 4;
     int y             = r->win->height - status_height;
 
@@ -302,8 +301,8 @@ void render_status_bar(Renderer* r, Buffer* buf)
     const char* filename = buf->filename ? buf->filename : "[No Name]";
     const char* modified = buf->modified ? " [+]" : "";
 
-    snprintf(status, sizeof(status), " %s%s  Ln %zu, Col %zu  [%dx]", filename, modified, line + 1,
-        col + 1, scale);
+    snprintf(status, sizeof(status), " %s%s  Ln %zu, Col %zu  [%.1fx]", filename, modified, line + 1,
+        col + 1, r->font_scale);
 
     // Draw status text
     int x = 0;
@@ -317,8 +316,7 @@ void render_status_bar(Renderer* r, Buffer* buf)
 
 void render_scrollbar(Renderer* r, Buffer* buf)
 {
-    int scale         = r->font_scale;
-    int status_height = FONT_HEIGHT * scale + 4;
+    int status_height = (int)(FONT_HEIGHT * r->font_scale) + 4;
     int track_height  = r->win->height - status_height;
     int track_x       = r->win->width - SCROLLBAR_WIDTH;
 

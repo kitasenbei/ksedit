@@ -8,9 +8,8 @@
 // Convert screen x,y to buffer position
 static size_t screen_to_buffer_pos(Editor* ed, int x, int y)
 {
-    int scale  = ed->renderer.font_scale;
-    int char_w = 8 * scale;
-    int char_h = 16 * scale;
+    int char_w = (int)(8 * ed->renderer.font_scale);
+    int char_h = (int)(16 * ed->renderer.font_scale);
 
     // Use line index for O(1) line count
     size_t total_lines = ed->buffer->line_count;
@@ -616,8 +615,10 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
         case KEY_SCROLL_UP:
             if (ev->key.ctrl) {
                 // Zoom in
-                if (ed->renderer.font_scale < 8) {
-                    ed->renderer.font_scale++;
+                if (ed->renderer.font_scale < 8.0f) {
+                    ed->renderer.font_scale += 0.5f;
+                    if (ed->renderer.font_scale > 8.0f)
+                        ed->renderer.font_scale = 8.0f;
                 }
             } else {
                 if (ed->renderer.scroll_y >= 3) {
@@ -637,8 +638,10 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
         case KEY_SCROLL_DOWN:
             if (ev->key.ctrl) {
                 // Zoom out
-                if (ed->renderer.font_scale > 1) {
-                    ed->renderer.font_scale--;
+                if (ed->renderer.font_scale > 1.0f) {
+                    ed->renderer.font_scale -= 0.5f;
+                    if (ed->renderer.font_scale < 1.0f)
+                        ed->renderer.font_scale = 1.0f;
                 }
             } else {
                 ed->renderer.scroll_y += 3;
@@ -663,8 +666,7 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
 
     case EVENT_MOUSE:
         if (ev->mouse.pressed && ev->mouse.button == 1) {
-            int scale  = ed->renderer.font_scale;
-            int char_h = 16 * scale;
+            int char_h = (int)(16 * ed->renderer.font_scale);
             int sb_x   = ed->window.width - render_scrollbar_width();
 
             // Check if click is on scrollbar
@@ -716,8 +718,7 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
         if (ed->dragging_scrollbar && ev->mouse.pressed) {
             size_t total_lines   = buffer_line_count(ed->buffer);
             int    visible_lines = render_visible_lines(&ed->renderer);
-            int    scale         = ed->renderer.font_scale;
-            int    status_height = 16 * scale + 4;
+            int    status_height = (int)(16 * ed->renderer.font_scale) + 4;
             int    track_height  = ed->window.height - status_height;
 
             if (total_lines > (size_t)visible_lines && track_height > 0) {
@@ -734,8 +735,7 @@ void editor_handle_event(Editor* ed, InputEvent* ev)
             }
         } else if (ed->dragging_selection && ev->mouse.pressed) {
             // Extend selection while dragging
-            int    scale         = ed->renderer.font_scale;
-            int    char_h        = 16 * scale;
+            int    char_h        = (int)(16 * ed->renderer.font_scale);
             int    status_height = char_h + 4;
             int    visible_lines = render_visible_lines(&ed->renderer);
             size_t total_lines   = buffer_line_count(ed->buffer);
